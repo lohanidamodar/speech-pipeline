@@ -10,6 +10,10 @@ class FakeVad implements VadEngine {
 
   void emit(VadEvent e) => _events.add(e);
 
+  /// The source running out, as happens when a recording ends or the mic is
+  /// closed. Any turn already in flight must still be answered.
+  Future<void> end() => _events.close();
+
   @override
   Stream<VadEvent> process(Stream<AudioChunk> audio) => _events.stream;
 
@@ -70,14 +74,13 @@ SpeechPipeline buildPipeline({
   required FakeStt stt,
   required FakeLlm llm,
   required FakeTts tts,
-}) =>
-    SpeechPipeline(
-      vad: vad,
-      stt: stt,
-      llm: llm,
-      tts: tts,
-      systemPrompt: 'test',
-    );
+}) => SpeechPipeline(
+  vad: vad,
+  stt: stt,
+  llm: llm,
+  tts: tts,
+  systemPrompt: 'test',
+);
 
 void main() {
   test('splits a reply into speakable sentences', () async {
@@ -131,10 +134,13 @@ void main() {
     final pipeline = buildPipeline(
       vad: vad,
       stt: FakeStt('tell me a long story'),
-      llm: FakeLlm(
-        ['One. ', 'Two. ', 'Three. ', 'Four. ', 'Five.'],
-        gap: const Duration(milliseconds: 20),
-      ),
+      llm: FakeLlm([
+        'One. ',
+        'Two. ',
+        'Three. ',
+        'Four. ',
+        'Five.',
+      ], gap: const Duration(milliseconds: 20)),
       tts: tts,
     );
 
@@ -151,8 +157,11 @@ void main() {
     await done.cancel();
 
     expect(spokenAtInterrupt, lessThan(5));
-    expect(tts.spoken, hasLength(spokenAtInterrupt),
-        reason: 'generation must stop once the turn is cancelled');
+    expect(
+      tts.spoken,
+      hasLength(spokenAtInterrupt),
+      reason: 'generation must stop once the turn is cancelled',
+    );
     expect(events.whereType<TurnComplete>(), isEmpty);
   });
 
@@ -175,10 +184,40 @@ void main() {
     await pumpUntil(() => llm.prompts.length == 2);
     await done.cancel();
 
-    expect(llm.prompts.last.map((m) => m.role),
-        ['system', 'user', 'assistant', 'user']);
+    expect(llm.prompts.last.map((m) => m.role), [
+      'system',
+      'user',
+      'assistant',
+      'user',
+    ]);
     expect(llm.prompts.last[2].content, 'Hello there.');
   });
+
+  test(
+    'answers the last utterance even though the mic stream has ended',
+    () async {
+      // The final turn used to be lost: the VAD stream completing closed the
+      // event stream immediately, while the reply was still being generated. On
+      // a file replay that meant every run produced nothing but silence.
+      final vad = FakeVad();
+      final tts = FakeTts();
+      final pipeline = buildPipeline(
+        vad: vad,
+        stt: FakeStt('What is the capital?'),
+        llm: FakeLlm(['Kathmandu.'], gap: const Duration(milliseconds: 20)),
+        tts: tts,
+      );
+
+      final events = pipeline.run(const Stream.empty()).toList();
+      vad.emit(SpeechEnded(Float32List(160)));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      await vad.end();
+
+      final seen = await events;
+      expect(seen.whereType<TurnComplete>().single.text, 'Kathmandu.');
+      expect(tts.spoken, ['Kathmandu.']);
+    },
+  );
 }
 
 /// Yields to the event loop until [condition] holds, so tests don't depend on

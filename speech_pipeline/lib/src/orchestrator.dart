@@ -11,6 +11,14 @@ final class UserSpeaking extends PipelineEvent {
   const UserSpeaking();
 }
 
+/// The user stopped talking; recognition has not run yet.
+///
+/// This is the moment they begin waiting, so it is the honest zero for any
+/// latency measurement — and the cue for a UI to show that it is thinking.
+final class UserFinishedSpeaking extends PipelineEvent {
+  const UserFinishedSpeaking();
+}
+
 final class UserTranscript extends PipelineEvent {
   const UserTranscript(this.text);
   final String text;
@@ -57,11 +65,11 @@ class SpeechPipeline {
     required TtsEngine tts,
     String systemPrompt = _defaultSystemPrompt,
     this.maxHistoryTurns = 12,
-  })  : _vad = vad,
-        _stt = stt,
-        _llm = llm,
-        _tts = tts,
-        _systemPrompt = systemPrompt;
+  }) : _vad = vad,
+       _stt = stt,
+       _llm = llm,
+       _tts = tts,
+       _systemPrompt = systemPrompt;
 
   static const _defaultSystemPrompt =
       'You are a voice assistant. Your replies are spoken aloud, so keep them '
@@ -91,11 +99,18 @@ class SpeechPipeline {
 
     out = StreamController<PipelineEvent>(
       onListen: () {
-        sub = _vad.process(mic).listen(
-          (event) => _onVadEvent(event, out),
-          onError: (Object e, StackTrace s) => out.add(PipelineError(e, s)),
-          onDone: out.close,
-        );
+        sub = _vad
+            .process(mic)
+            .listen(
+              (event) => _onVadEvent(event, out),
+              onError: (Object e, StackTrace s) => out.add(PipelineError(e, s)),
+              // The last utterance is still being answered when the mic stream
+              // ends; closing here would drop its reply on the floor.
+              onDone: () async {
+                await _active?.finished;
+                await out.close();
+              },
+            );
       },
       onCancel: () async {
         _active?.cancel();
@@ -117,6 +132,7 @@ class SpeechPipeline {
         }
 
       case SpeechEnded(:final samples):
+        out.add(const UserFinishedSpeaking());
         final turn = _Turn();
         _active = turn;
         unawaited(_runTurn(samples, turn, out));
@@ -139,7 +155,11 @@ class SpeechPipeline {
       final reply = StringBuffer();
       final prompt = [Message.system(_systemPrompt), ..._history];
 
-      await for (final sentence in _sentences(_llm.respond(prompt), turn, out)) {
+      await for (final sentence in _sentences(
+        _llm.respond(prompt),
+        turn,
+        out,
+      )) {
         if (turn.cancelled) break;
         await for (final chunk in _tts.synthesize(sentence)) {
           if (turn.cancelled) break;
@@ -235,8 +255,19 @@ class SpeechPipeline {
 }
 
 class _Turn {
+  final _completion = Completer<void>();
+
   bool cancelled = false;
-  bool done = false;
+  bool _done = false;
+
+  bool get done => _done;
+
+  set done(bool value) {
+    _done = value;
+    if (value && !_completion.isCompleted) _completion.complete();
+  }
+
+  Future<void> get finished => _completion.future;
 
   void cancel() => cancelled = true;
 }

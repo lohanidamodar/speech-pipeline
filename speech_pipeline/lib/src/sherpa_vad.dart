@@ -80,10 +80,21 @@ class SherpaVadEngine implements VadEngine {
       if (detected && !_wasDetected) yield const SpeechStarted();
       _wasDetected = detected;
 
-      while (!_vad.isEmpty()) {
-        yield SpeechEnded(_withPreRoll(_vad.front()));
-        _vad.pop();
-      }
+      yield* _drain();
+    }
+
+    // The source ended. A segment still open at that moment — the common case
+    // when replaying a file, and what happens on a live mic at shutdown — is
+    // held inside the detector and would otherwise be discarded unspoken.
+    _vad.flush();
+    yield* _drain();
+    _wasDetected = false;
+  }
+
+  Stream<VadEvent> _drain() async* {
+    while (!_vad.isEmpty()) {
+      yield SpeechEnded(_withPreRoll(_vad.front()));
+      _vad.pop();
     }
   }
 
