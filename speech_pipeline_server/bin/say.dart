@@ -41,20 +41,20 @@ Future<void> main(List<String> argv) async {
 
   final config = switch (language) {
     PipelineLanguage.english => TtsConfig.kokoro(
-        model: '$models/kokoro-en-v0_19/model.onnx',
-        voices: '$models/kokoro-en-v0_19/voices.bin',
-        tokens: '$models/kokoro-en-v0_19/tokens.txt',
-        dataDir: '$models/kokoro-en-v0_19/espeak-ng-data',
-        numThreads: threads,
-        nativeLibraryPath: nativeLib,
-      ),
+      model: '$models/kokoro-en-v0_19/model.onnx',
+      voices: '$models/kokoro-en-v0_19/voices.bin',
+      tokens: '$models/kokoro-en-v0_19/tokens.txt',
+      dataDir: '$models/kokoro-en-v0_19/espeak-ng-data',
+      numThreads: threads,
+      nativeLibraryPath: nativeLib,
+    ),
     PipelineLanguage.nepali => _piper(
-        models,
-        'vits-piper-ne_NP-chitwan-medium',
-        'ne_NP-chitwan-medium',
-        threads,
-        nativeLib,
-      ),
+      models,
+      'vits-piper-ne_NP-chitwan-medium',
+      'ne_NP-chitwan-medium',
+      threads,
+      nativeLib,
+    ),
     PipelineLanguage.sanskrit => throw StateError('handled above'),
   };
 
@@ -77,8 +77,10 @@ Future<void> main(List<String> argv) async {
   final seconds = audio.length / tts.sampleRate;
   final elapsed = DateTime.now().difference(started).inMilliseconds;
   stdout.writeln('${support.tts.model} @ ${tts.sampleRate} Hz');
-  stdout.writeln('  ${seconds.toStringAsFixed(2)}s of audio in ${elapsed}ms '
-      '(RTF ${(elapsed / 1000 / seconds).toStringAsFixed(2)})');
+  stdout.writeln(
+    '  ${seconds.toStringAsFixed(2)}s of audio in ${elapsed}ms '
+    '(RTF ${(elapsed / 1000 / seconds).toStringAsFixed(2)})',
+  );
 
   final out = args.option('out')!;
   await File(out).writeAsBytes([
@@ -96,14 +98,13 @@ TtsConfig _piper(
   String name,
   int threads,
   String? nativeLib,
-) =>
-    TtsConfig.vits(
-      model: '$models/$dir/$name.onnx',
-      tokens: '$models/$dir/tokens.txt',
-      dataDir: '$models/$dir/espeak-ng-data',
-      numThreads: threads,
-      nativeLibraryPath: nativeLib,
-    );
+) => TtsConfig.vits(
+  model: '$models/$dir/$name.onnx',
+  tokens: '$models/$dir/tokens.txt',
+  dataDir: '$models/$dir/espeak-ng-data',
+  numThreads: threads,
+  nativeLibraryPath: nativeLib,
+);
 
 AudioChunk _concat(List<AudioChunk> parts) {
   final total = parts.fold(0, (n, p) => n + p.length);
@@ -170,11 +171,15 @@ Future<void> _saySanskrit(
 
   final seconds = audio.length / tts.sampleRate;
   final elapsed = DateTime.now().difference(started).inMilliseconds;
-  stdout.writeln('Kokoro + Sanskrit phonemizer @ ${tts.sampleRate} Hz '
-      '(voice ${names[voice]})');
-  stdout.writeln('  ${chunks.length} chunk(s), '
-      '${seconds.toStringAsFixed(2)}s of audio in ${elapsed}ms '
-      '(RTF ${(elapsed / 1000 / seconds).toStringAsFixed(2)})');
+  stdout.writeln(
+    'Kokoro + Sanskrit phonemizer @ ${tts.sampleRate} Hz '
+    '(voice ${names[voice]})',
+  );
+  stdout.writeln(
+    '  ${chunks.length} chunk(s), '
+    '${seconds.toStringAsFixed(2)}s of audio in ${elapsed}ms '
+    '(RTF ${(elapsed / 1000 / seconds).toStringAsFixed(2)})',
+  );
 
   final out = args.option('out')!;
   await File(out).writeAsBytes([

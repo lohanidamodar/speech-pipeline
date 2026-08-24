@@ -63,15 +63,58 @@ class KokoroIpaConfig {
 /// full upstream set. Feeding IPA directly bypasses the front-end, so any of
 /// these is usable.
 const kokoroMultiLangVoices = [
-  'af_alloy', 'af_aoede', 'af_bella', 'af_heart', 'af_jessica', 'af_kore',
-  'af_nicole', 'af_nova', 'af_river', 'af_sarah', 'af_sky', 'am_adam',
-  'am_echo', 'am_eric', 'am_fenrir', 'am_liam', 'am_michael', 'am_onyx',
-  'am_puck', 'am_santa', 'bf_alice', 'bf_emma', 'bf_isabella', 'bf_lily',
-  'bm_daniel', 'bm_fable', 'bm_george', 'bm_lewis', 'ef_dora', 'em_alex',
-  'ff_siwis', 'hf_alpha', 'hf_beta', 'hm_omega', 'hm_psi', 'if_sara',
-  'im_nicola', 'jf_alpha', 'jf_gongitsune', 'jf_nezumi', 'jf_tebukuro',
-  'jm_kumo', 'pf_dora', 'pm_alex', 'pm_santa', 'zf_xiaobei', 'zf_xiaoni',
-  'zf_xiaoxiao', 'zf_xiaoyi', 'zm_yunjian', 'zm_yunxi', 'zm_yunxia',
+  'af_alloy',
+  'af_aoede',
+  'af_bella',
+  'af_heart',
+  'af_jessica',
+  'af_kore',
+  'af_nicole',
+  'af_nova',
+  'af_river',
+  'af_sarah',
+  'af_sky',
+  'am_adam',
+  'am_echo',
+  'am_eric',
+  'am_fenrir',
+  'am_liam',
+  'am_michael',
+  'am_onyx',
+  'am_puck',
+  'am_santa',
+  'bf_alice',
+  'bf_emma',
+  'bf_isabella',
+  'bf_lily',
+  'bm_daniel',
+  'bm_fable',
+  'bm_george',
+  'bm_lewis',
+  'ef_dora',
+  'em_alex',
+  'ff_siwis',
+  'hf_alpha',
+  'hf_beta',
+  'hm_omega',
+  'hm_psi',
+  'if_sara',
+  'im_nicola',
+  'jf_alpha',
+  'jf_gongitsune',
+  'jf_nezumi',
+  'jf_tebukuro',
+  'jm_kumo',
+  'pf_dora',
+  'pm_alex',
+  'pm_santa',
+  'zf_xiaobei',
+  'zf_xiaoni',
+  'zf_xiaoxiao',
+  'zf_xiaoyi',
+  'zm_yunjian',
+  'zm_yunxi',
+  'zm_yunxia',
   'zm_yunyang',
 ];
 
@@ -209,11 +252,11 @@ class KokoroIpaTtsEngine implements TtsEngine {
   static Future<KokoroIpaTtsEngine> spawn(KokoroIpaConfig config) async {
     final cancelFlag = calloc<Int32>();
     final fromWorker = ReceivePort();
-    final isolate = await Isolate.spawn(
-      _workerMain,
-      (fromWorker.sendPort, config, cancelFlag.address),
-      debugName: 'kokoro-ipa',
-    );
+    final isolate = await Isolate.spawn(_workerMain, (
+      fromWorker.sendPort,
+      config,
+      cancelFlag.address,
+    ), debugName: 'kokoro-ipa');
 
     final events = StreamController<(int, Object?)>.broadcast();
     final ready = Completer<SendPort>();
@@ -295,8 +338,10 @@ class KokoroIpaTtsEngine implements TtsEngine {
     final env = DartONNX(loggingLevel: DartONNXLoggingLevel.error);
     final session = DartONNXSession.fromFile(env, config.model);
     final vocab = KokoroVocabulary.fromFile(config.tokens);
-    final voices =
-        KokoroVoiceBank.fromFile(config.voices, voiceCount: config.voiceCount);
+    final voices = KokoroVoiceBank.fromFile(
+      config.voices,
+      voiceCount: config.voiceCount,
+    );
 
     final inbox = ReceivePort();
     toMain.send(inbox.sendPort);
@@ -337,8 +382,8 @@ class KokoroIpaTtsEngine implements TtsEngine {
     final name = Platform.isWindows
         ? 'onnxruntime.dll'
         : Platform.isMacOS
-            ? 'libonnxruntime.dylib'
-            : 'libonnxruntime.so';
+        ? 'libonnxruntime.dylib'
+        : 'libonnxruntime.so';
     final path = '$directory${Platform.pathSeparator}$name';
 
     if (!File(path).existsSync()) {
@@ -369,10 +414,7 @@ class KokoroIpaTtsEngine implements TtsEngine {
     );
 
     final inputs = {
-      'tokens': DartONNXTensor.int64(
-        data: tokens,
-        shape: [1, tokens.length],
-      ),
+      'tokens': DartONNXTensor.int64(data: tokens, shape: [1, tokens.length]),
       'style': DartONNXTensor.float32(data: style, shape: [1, _styleDim]),
       'speed': DartONNXTensor.float32(
         data: Float32List.fromList([config.speed]),
@@ -383,7 +425,9 @@ class KokoroIpaTtsEngine implements TtsEngine {
     final outputs = session.run(inputs);
     try {
       final audio = outputs['audio']?.data;
-      return audio is Float32List ? Float32List.fromList(audio) : Float32List(0);
+      return audio is Float32List
+          ? Float32List.fromList(audio)
+          : Float32List(0);
     } finally {
       for (final tensor in inputs.values) {
         tensor.dispose();

@@ -21,9 +21,9 @@ class TtsConfig {
     this.speed = 1.0,
     this.numThreads = 2,
     this.nativeLibraryPath,
-  })  : kind = TtsModelKind.kokoro,
-        acousticModel = '',
-        vocoder = '';
+  }) : kind = TtsModelKind.kokoro,
+       acousticModel = '',
+       vocoder = '';
 
   const TtsConfig.vits({
     required this.model,
@@ -34,10 +34,10 @@ class TtsConfig {
     this.speed = 1.0,
     this.numThreads = 2,
     this.nativeLibraryPath,
-  })  : kind = TtsModelKind.vits,
-        voices = '',
-        acousticModel = '',
-        vocoder = '';
+  }) : kind = TtsModelKind.vits,
+       voices = '',
+       acousticModel = '',
+       vocoder = '';
 
   const TtsConfig.matcha({
     required this.acousticModel,
@@ -49,9 +49,9 @@ class TtsConfig {
     this.speed = 1.0,
     this.numThreads = 2,
     this.nativeLibraryPath,
-  })  : kind = TtsModelKind.matcha,
-        model = '',
-        voices = '';
+  }) : kind = TtsModelKind.matcha,
+       model = '',
+       voices = '';
 
   final TtsModelKind kind;
   final String model;
@@ -87,11 +87,11 @@ class SherpaTtsEngine implements TtsEngine {
   static Future<SherpaTtsEngine> spawn(TtsConfig config) async {
     final cancelFlag = calloc<Int32>();
     final fromWorker = ReceivePort();
-    final isolate = await Isolate.spawn(
-      _workerMain,
-      (fromWorker.sendPort, config, cancelFlag.address),
-      debugName: 'tts',
-    );
+    final isolate = await Isolate.spawn(_workerMain, (
+      fromWorker.sendPort,
+      config,
+      cancelFlag.address,
+    ), debugName: 'tts');
 
     final events = StreamController<(int, Object?)>.broadcast();
     final ready = Completer<(SendPort, int)>();
@@ -199,37 +199,37 @@ class SherpaTtsEngine implements TtsEngine {
   static sherpa.OfflineTtsConfig _buildConfig(TtsConfig c) {
     final model = switch (c.kind) {
       TtsModelKind.kokoro => sherpa.OfflineTtsModelConfig(
-          kokoro: sherpa.OfflineTtsKokoroModelConfig(
-            model: c.model,
-            voices: c.voices,
-            tokens: c.tokens,
-            dataDir: c.dataDir,
-            lexicon: c.lexicon,
-          ),
-          numThreads: c.numThreads,
-          debug: false,
+        kokoro: sherpa.OfflineTtsKokoroModelConfig(
+          model: c.model,
+          voices: c.voices,
+          tokens: c.tokens,
+          dataDir: c.dataDir,
+          lexicon: c.lexicon,
         ),
+        numThreads: c.numThreads,
+        debug: false,
+      ),
       TtsModelKind.vits => sherpa.OfflineTtsModelConfig(
-          vits: sherpa.OfflineTtsVitsModelConfig(
-            model: c.model,
-            tokens: c.tokens,
-            dataDir: c.dataDir,
-            lexicon: c.lexicon,
-          ),
-          numThreads: c.numThreads,
-          debug: false,
+        vits: sherpa.OfflineTtsVitsModelConfig(
+          model: c.model,
+          tokens: c.tokens,
+          dataDir: c.dataDir,
+          lexicon: c.lexicon,
         ),
+        numThreads: c.numThreads,
+        debug: false,
+      ),
       TtsModelKind.matcha => sherpa.OfflineTtsModelConfig(
-          matcha: sherpa.OfflineTtsMatchaModelConfig(
-            acousticModel: c.acousticModel,
-            vocoder: c.vocoder,
-            tokens: c.tokens,
-            dataDir: c.dataDir,
-            lexicon: c.lexicon,
-          ),
-          numThreads: c.numThreads,
-          debug: false,
+        matcha: sherpa.OfflineTtsMatchaModelConfig(
+          acousticModel: c.acousticModel,
+          vocoder: c.vocoder,
+          tokens: c.tokens,
+          dataDir: c.dataDir,
+          lexicon: c.lexicon,
         ),
+        numThreads: c.numThreads,
+        debug: false,
+      ),
     };
     return sherpa.OfflineTtsConfig(model: model);
   }

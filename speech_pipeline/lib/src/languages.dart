@@ -13,9 +13,9 @@ enum PipelineLanguage {
   final String label;
 
   static PipelineLanguage byCode(String code) => values.firstWhere(
-        (l) => l.code == code,
-        orElse: () => throw ArgumentError('Unknown language code: $code'),
-      );
+    (l) => l.code == code,
+    orElse: () => throw ArgumentError('Unknown language code: $code'),
+  );
 }
 
 /// How well a stage is served for a given language.
@@ -74,7 +74,8 @@ const languageSupport = <PipelineLanguage, LanguageSupport>{
       level: SupportLevel.ready,
       model: 'AI4Bharat IndicConformer (ne)',
       fallback: 'Whisper --language ne',
-      caveat: 'Needs tool/export_indicconformer.py --lang ne once (gated, so '
+      caveat:
+          'Needs tool/export_indicconformer.py --lang ne once (gated, so '
           'an HF_TOKEN and accepted terms). Far better than Whisper, which is '
           'measurably poor at Nepali. Not yet validated by a Nepali speaker on '
           'human audio: on synthesised input it returns anusvara as '
@@ -91,7 +92,8 @@ const languageSupport = <PipelineLanguage, LanguageSupport>{
       level: SupportLevel.ready,
       model: 'AI4Bharat IndicConformer (sa)',
       fallback: 'Whisper --language sa',
-      caveat: 'Same one-time gated export as Nepali. Verified against native '
+      caveat:
+          'Same one-time gated export as Nepali. Verified against native '
           'Sanskrit TTS: phonemes come through intact, including retroflexes '
           'and conjuncts; the residual errors are word-boundary placement, '
           'which is what CTC without a language model does. Earlier poor '
@@ -100,7 +102,8 @@ const languageSupport = <PipelineLanguage, LanguageSupport>{
     tts: StageSupport(
       level: SupportLevel.approximated,
       model: 'Kokoro + Sanskrit phonemizer (IPA direct)',
-      caveat: 'Phonology is correct — the Devanagari phonemizer keeps the '
+      caveat:
+          'Phonology is correct — the Devanagari phonemizer keeps the '
           'inherent vowel, assimilates anusvara to the following consonant '
           'class, and gives visarga its echo, none of which espeak-ng Hindi '
           'does. What it is not is chanting: the voice is an English Kokoro '

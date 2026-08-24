@@ -20,13 +20,19 @@ Future<void> main(List<String> argv) async {
     ..addOption('instruct', help: 'Voice design prompt.')
     ..addOption('ref-wav', help: 'Reference audio to clone.')
     ..addOption('ref-text', help: 'Transcript of --ref-wav.')
-    ..addOption('backend', defaultsTo: 'cpu',
-        allowed: ['cpu', 'cuda', 'vulkan', 'metal', 'hip', 'best'])
+    ..addOption(
+      'backend',
+      defaultsTo: 'cpu',
+      allowed: ['cpu', 'cuda', 'vulkan', 'metal', 'hip', 'best'],
+    )
     ..addOption('device', defaultsTo: '0')
     ..addOption('threads', defaultsTo: '8')
     ..addOption('out', defaultsTo: 'aspeak.wav')
-    ..addOption('repeat', defaultsTo: '1',
-        help: 'Synthesise N times to show load is paid once.');
+    ..addOption(
+      'repeat',
+      defaultsTo: '1',
+      help: 'Synthesise N times to show load is paid once.',
+    );
 
   final args = parser.parse(argv);
   final backend = AcBackend.values.byName(args.option('backend')!);
@@ -80,8 +86,10 @@ Future<void> main(List<String> argv) async {
       ),
       ...float32ToPcm16(audio.samples),
     ]);
-    stdout.writeln('  run $i: ${audio.seconds.toStringAsFixed(2)}s audio in '
-        '${ms}ms  RTF ${rtf.toStringAsFixed(3)}  -> $path');
+    stdout.writeln(
+      '  run $i: ${audio.seconds.toStringAsFixed(2)}s audio in '
+      '${ms}ms  RTF ${rtf.toStringAsFixed(3)}  -> $path',
+    );
   }
 
   engine.dispose();

@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:args/args.dart';
 import 'package:speech_pipeline/speech_pipeline.dart';
-import 'package:speech_pipeline_server/setup.dart';
 
 /// Speaks a phrase in the chosen language, then feeds the audio back through
 /// VAD and STT to see what comes out.
@@ -69,8 +68,10 @@ Future<void> main(List<String> argv) async {
 
   final seconds = audio.length / tts.sampleRate;
   final elapsed = DateTime.now().difference(started).inMilliseconds;
-  stdout.writeln('  ${seconds.toStringAsFixed(2)}s of audio in ${elapsed}ms '
-      '(RTF ${(elapsed / 1000 / seconds).toStringAsFixed(2)})');
+  stdout.writeln(
+    '  ${seconds.toStringAsFixed(2)}s of audio in ${elapsed}ms '
+    '(RTF ${(elapsed / 1000 / seconds).toStringAsFixed(2)})',
+  );
 
   final wav = 'roundtrip-${language.code}.wav';
   await File(wav).writeAsBytes([

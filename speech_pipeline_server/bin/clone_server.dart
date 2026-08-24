@@ -60,29 +60,36 @@ Future<void> main(List<String> argv) async {
 
   stdout.writeln('Voice cloning UI  →  http://localhost:${server.port}');
   stdout.writeln(engines.describe());
-  stdout.writeln('\nMicrophone capture needs a secure context; localhost counts,'
-      ' so open it on this machine rather than over the LAN.');
+  stdout.writeln(
+    '\nMicrophone capture needs a secure context; localhost counts,'
+    ' so open it on this machine rather than over the LAN.',
+  );
 }
 
 String _mime(String name) => switch (name.split('.').last) {
-      'html' => 'text/html; charset=utf-8',
-      'js' => 'text/javascript',
-      'css' => 'text/css',
-      'wav' => 'audio/wav',
-      _ => 'application/octet-stream',
-    };
+  'html' => 'text/html; charset=utf-8',
+  'js' => 'text/javascript',
+  'css' => 'text/css',
+  'wav' => 'audio/wav',
+  _ => 'application/octet-stream',
+};
 
 class _Engines {
-  _Engines(this.llamaTts, this.qwenDir, this.omnivoice, this.omniDir,
-      this.steps);
+  _Engines(
+    this.llamaTts,
+    this.qwenDir,
+    this.omnivoice,
+    this.omniDir,
+    this.steps,
+  );
 
   factory _Engines.from(ArgResults a) => _Engines(
-        a.option('llama-tts'),
-        a.option('qwen-dir'),
-        a.option('omnivoice'),
-        a.option('omni-dir'),
-        a.option('steps')!,
-      );
+    a.option('llama-tts'),
+    a.option('qwen-dir'),
+    a.option('omnivoice'),
+    a.option('omni-dir'),
+    a.option('steps')!,
+  );
 
   final String? llamaTts, qwenDir, omnivoice, omniDir;
   final String steps;
@@ -91,9 +98,9 @@ class _Engines {
   bool get hasIndic => omnivoice != null && omniDir != null;
 
   String describe() => [
-        '  English  (Qwen3-TTS): ${hasEnglish ? "ready" : "not configured"}',
-        '  ne / sa (OmniVoice) : ${hasIndic ? "ready" : "not configured"}',
-      ].join('\n');
+    '  English  (Qwen3-TTS): ${hasEnglish ? "ready" : "not configured"}',
+    '  ne / sa (OmniVoice) : ${hasIndic ? "ready" : "not configured"}',
+  ].join('\n');
 
   /// Finds a file in [dir] matching [pattern] — the GGUF names carry their
   /// quantisation, so hardcoding them would break on a different download.
@@ -114,28 +121,45 @@ class _Engines {
     final mmproj = _find(qwenDir, RegExp(r'^mmproj-.*\.gguf$'));
     if (model == null || mmproj == null) return null;
     return [
-      '-m', model, '--mmproj', mmproj,
-      '--tts-lang', 'en', '--tts-speaker-file', ref,
-      '-p', text, '-o', out,
+      '-m',
+      model,
+      '--mmproj',
+      mmproj,
+      '--tts-lang',
+      'en',
+      '--tts-speaker-file',
+      ref,
+      '-p',
+      text,
+      '-o',
+      out,
     ];
   }
 
-  List<String>? indicArgs(
-      String lang, String ref, String refText, String out) {
+  List<String>? indicArgs(String lang, String ref, String refText, String out) {
     final model = _find(omniDir, RegExp(r'^omnivoice-base.*\.gguf$'));
     final codec = _find(omniDir, RegExp(r'^omnivoice-tokenizer.*\.gguf$'));
     if (model == null || codec == null) return null;
     return [
-      '--model', model, '--codec', codec,
-      '--lang', lang == 'ne' ? 'npi' : 'sa',
-      '--ref-wav', ref, '--ref-text', refText,
-      '--steps', steps, '-o', out,
+      '--model',
+      model,
+      '--codec',
+      codec,
+      '--lang',
+      lang == 'ne' ? 'npi' : 'sa',
+      '--ref-wav',
+      ref,
+      '--ref-text',
+      refText,
+      '--steps',
+      steps,
+      '-o',
+      out,
     ];
   }
 }
 
-Future<Response> _clone(
-    Request req, _Engines engines, Directory work) async {
+Future<Response> _clone(Request req, _Engines engines, Directory work) async {
   final lang = req.headers['x-lang'] ?? 'en';
   final text = Uri.decodeComponent(req.headers['x-text'] ?? '').trim();
   final refText = Uri.decodeComponent(req.headers['x-ref-text'] ?? '').trim();
@@ -156,18 +180,21 @@ Future<Response> _clone(
   if (lang == 'en') {
     if (!engines.hasEnglish) {
       return Response.internalServerError(
-          body: 'English engine not configured (--llama-tts / --qwen-dir).');
+        body: 'English engine not configured (--llama-tts / --qwen-dir).',
+      );
     }
     exe = engines.llamaTts!;
     cmdArgs = engines.englishArgs(ref.path, text, out.path);
   } else {
     if (!engines.hasIndic) {
       return Response.internalServerError(
-          body: 'OmniVoice not configured (--omnivoice / --omni-dir).');
+        body: 'OmniVoice not configured (--omnivoice / --omni-dir).',
+      );
     }
     if (refText.isEmpty) {
       return Response.badRequest(
-          body: 'OmniVoice needs the transcript of the reference recording.');
+        body: 'OmniVoice needs the transcript of the reference recording.',
+      );
     }
     final rt = File('${work.path}/ref_$stamp.txt')..writeAsStringSync(refText);
     exe = engines.omnivoice!;
@@ -178,7 +205,9 @@ Future<Response> _clone(
     return Response.internalServerError(body: 'Model files not found on disk.');
   }
 
-  stdout.writeln('[clone] $lang  "${text.length > 60 ? "${text.substring(0, 60)}…" : text}"');
+  stdout.writeln(
+    '[clone] $lang  "${text.length > 60 ? "${text.substring(0, 60)}…" : text}"',
+  );
   final started = DateTime.now();
 
   final ProcessResult result;
@@ -193,12 +222,13 @@ Future<Response> _clone(
     final why = (result.stderr.toString() + result.stdout.toString()).trim();
     stdout.writeln('[clone] failed in ${ms}ms');
     return Response.internalServerError(
-        body: why.isEmpty ? 'Engine produced no audio.' : why);
+      body: why.isEmpty ? 'Engine produced no audio.' : why,
+    );
   }
 
   stdout.writeln('[clone] ok in ${ms}ms → ${out.lengthSync() ~/ 1024} KB');
-  return Response.ok(out.readAsBytesSync(), headers: {
-    'content-type': 'audio/wav',
-    'x-elapsed-ms': '$ms',
-  });
+  return Response.ok(
+    out.readAsBytesSync(),
+    headers: {'content-type': 'audio/wav', 'x-elapsed-ms': '$ms'},
+  );
 }

@@ -57,7 +57,8 @@ void main() {
   test('produces only phonemes Kokoro can tokenise', () {
     // Every symbol emitted must exist in Kokoro's 177-token vocabulary,
     // otherwise synthesis silently drops it.
-    const kokoroSymbols = 'abdefhijklmnoprstuvzɐɑɒɔəɛɜɡɪɹɾʃʊʋʌʒʔʈɖɳʂɲŋɭɜː'
+    const kokoroSymbols =
+        'abdefhijklmnoprstuvzɐɑɒɔəɛɜɡɪɹɾʃʊʋʌʒʔʈɖɳʂɲŋɭɜː'
         'ʰɚɝθðŋæaʊaɪeɪoʊ .,;:!?';
     const samples = [
       'नमः शिवाय',

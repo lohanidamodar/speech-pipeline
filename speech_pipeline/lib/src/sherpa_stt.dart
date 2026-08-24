@@ -18,9 +18,9 @@ class SttConfig {
     this.language = '',
     this.numThreads = 2,
     this.nativeLibraryPath,
-  })  : kind = SttModelKind.senseVoice,
-        encoder = '',
-        decoder = '';
+  }) : kind = SttModelKind.senseVoice,
+       encoder = '',
+       decoder = '';
 
   const SttConfig.whisper({
     required this.encoder,
@@ -29,8 +29,8 @@ class SttConfig {
     this.language = 'en',
     this.numThreads = 2,
     this.nativeLibraryPath,
-  })  : kind = SttModelKind.whisper,
-        model = '';
+  }) : kind = SttModelKind.whisper,
+       model = '';
 
   /// NeMo Conformer-CTC — the family AI4Bharat's IndicConformer belongs to,
   /// which is how Nepali and Sanskrit get a dedicated recogniser rather than a
@@ -41,10 +41,10 @@ class SttConfig {
     required this.tokens,
     this.numThreads = 2,
     this.nativeLibraryPath,
-  })  : kind = SttModelKind.nemoCtc,
-        encoder = '',
-        decoder = '',
-        language = '';
+  }) : kind = SttModelKind.nemoCtc,
+       encoder = '',
+       decoder = '',
+       language = '';
 
   final SttModelKind kind;
   final String model;
@@ -74,11 +74,10 @@ class SherpaSttEngine implements SttEngine {
 
   static Future<SherpaSttEngine> spawn(SttConfig config) async {
     final fromWorker = ReceivePort();
-    final isolate = await Isolate.spawn(
-      _workerMain,
-      (fromWorker.sendPort, config),
-      debugName: 'stt',
-    );
+    final isolate = await Isolate.spawn(_workerMain, (
+      fromWorker.sendPort,
+      config,
+    ), debugName: 'stt');
 
     final responses = StreamController<(int, String)>.broadcast();
     final toWorker = Completer<SendPort>();
@@ -150,31 +149,31 @@ class SherpaSttEngine implements SttEngine {
   static sherpa.OfflineRecognizerConfig _buildConfig(SttConfig c) {
     final model = switch (c.kind) {
       SttModelKind.senseVoice => sherpa.OfflineModelConfig(
-          senseVoice: sherpa.OfflineSenseVoiceModelConfig(
-            model: c.model,
-            language: c.language,
-            useInverseTextNormalization: true,
-          ),
-          tokens: c.tokens,
-          numThreads: c.numThreads,
-          debug: false,
+        senseVoice: sherpa.OfflineSenseVoiceModelConfig(
+          model: c.model,
+          language: c.language,
+          useInverseTextNormalization: true,
         ),
+        tokens: c.tokens,
+        numThreads: c.numThreads,
+        debug: false,
+      ),
       SttModelKind.whisper => sherpa.OfflineModelConfig(
-          whisper: sherpa.OfflineWhisperModelConfig(
-            encoder: c.encoder,
-            decoder: c.decoder,
-            language: c.language,
-          ),
-          tokens: c.tokens,
-          numThreads: c.numThreads,
-          debug: false,
+        whisper: sherpa.OfflineWhisperModelConfig(
+          encoder: c.encoder,
+          decoder: c.decoder,
+          language: c.language,
         ),
+        tokens: c.tokens,
+        numThreads: c.numThreads,
+        debug: false,
+      ),
       SttModelKind.nemoCtc => sherpa.OfflineModelConfig(
-          nemoCtc: sherpa.OfflineNemoEncDecCtcModelConfig(model: c.model),
-          tokens: c.tokens,
-          numThreads: c.numThreads,
-          debug: false,
-        ),
+        nemoCtc: sherpa.OfflineNemoEncDecCtcModelConfig(model: c.model),
+        tokens: c.tokens,
+        numThreads: c.numThreads,
+        debug: false,
+      ),
     };
     return sherpa.OfflineRecognizerConfig(model: model);
   }
