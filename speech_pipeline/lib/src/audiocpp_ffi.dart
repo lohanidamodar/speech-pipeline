@@ -40,26 +40,47 @@ enum AcBackend { cpu, cuda, vulkan, metal, hip, best }
 
 class _Bindings {
   _Bindings(DynamicLibrary lib)
-      : init = lib.lookupFunction<
+    : init = lib
+          .lookupFunction<
             Pointer<Void> Function(Pointer<_AcModelParams>),
-            Pointer<Void> Function(Pointer<_AcModelParams>)>('ac_init'),
-        free = lib.lookupFunction<Void Function(Pointer<Void>),
-            void Function(Pointer<Void>)>('ac_free'),
-        synthesize = lib.lookupFunction<
-            Int32 Function(Pointer<Void>, Pointer<_AcTtsParams>, Pointer<_AcAudio>),
-            int Function(Pointer<Void>, Pointer<_AcTtsParams>,
-                Pointer<_AcAudio>)>('ac_synthesize'),
-        audioFree = lib.lookupFunction<Void Function(Pointer<_AcAudio>),
-            void Function(Pointer<_AcAudio>)>('ac_audio_free'),
-        lastError = lib.lookupFunction<Pointer<Utf8> Function(),
-            Pointer<Utf8> Function()>('ac_last_error'),
-        version = lib.lookupFunction<Pointer<Utf8> Function(),
-            Pointer<Utf8> Function()>('ac_version');
+            Pointer<Void> Function(Pointer<_AcModelParams>)
+          >('ac_init'),
+      free = lib
+          .lookupFunction<
+            Void Function(Pointer<Void>),
+            void Function(Pointer<Void>)
+          >('ac_free'),
+      synthesize = lib
+          .lookupFunction<
+            Int32 Function(
+              Pointer<Void>,
+              Pointer<_AcTtsParams>,
+              Pointer<_AcAudio>,
+            ),
+            int Function(
+              Pointer<Void>,
+              Pointer<_AcTtsParams>,
+              Pointer<_AcAudio>,
+            )
+          >('ac_synthesize'),
+      audioFree = lib
+          .lookupFunction<
+            Void Function(Pointer<_AcAudio>),
+            void Function(Pointer<_AcAudio>)
+          >('ac_audio_free'),
+      lastError = lib
+          .lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>(
+            'ac_last_error',
+          ),
+      version = lib
+          .lookupFunction<Pointer<Utf8> Function(), Pointer<Utf8> Function()>(
+            'ac_version',
+          );
 
   final Pointer<Void> Function(Pointer<_AcModelParams>) init;
   final void Function(Pointer<Void>) free;
   final int Function(Pointer<Void>, Pointer<_AcTtsParams>, Pointer<_AcAudio>)
-      synthesize;
+  synthesize;
   final void Function(Pointer<_AcAudio>) audioFree;
   final Pointer<Utf8> Function() lastError;
   final Pointer<Utf8> Function() version;
@@ -91,16 +112,23 @@ class AcAudio {
 class AudioCpp {
   AudioCpp._(this._b, this._ctx);
 
+  /// [libraryPath] may be the directory holding the shared library or the
+  /// library file itself — both readings are natural, and guessing wrong
+  /// produces a doubled-up path that is baffling to read.
   static DynamicLibrary _open(String? libraryPath) {
     final name = Platform.isWindows
         ? 'audiocpp_c.dll'
         : Platform.isMacOS
-            ? 'libaudiocpp_c.dylib'
-            : 'libaudiocpp_c.so';
-    final path = libraryPath == null
-        ? name
+        ? 'libaudiocpp_c.dylib'
+        : 'libaudiocpp_c.so';
+    // No path at all: let the OS loader search, which is how a Flutter build
+    // finds the library bundled into the app.
+    if (libraryPath == null) return DynamicLibrary.open(name);
+
+    final path = File(libraryPath).existsSync()
+        ? libraryPath
         : '$libraryPath${Platform.pathSeparator}$name';
-    if (libraryPath != null && !File(path).existsSync()) {
+    if (!File(path).existsSync()) {
       throw AcException('Native library not found at $path');
     }
     return DynamicLibrary.open(path);

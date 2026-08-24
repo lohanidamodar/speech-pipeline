@@ -29,7 +29,8 @@ class Stt {
 
     final sherpa.OfflineModelConfig model;
     if (language == 'en') {
-      final dir = '$modelsDir/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17';
+      final dir =
+          '$modelsDir/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17';
       model = sherpa.OfflineModelConfig(
         senseVoice: sherpa.OfflineSenseVoiceModelConfig(
           model: '$dir/model.int8.onnx',
@@ -43,17 +44,22 @@ class Stt {
       final code = language == 'sa' ? 'sa' : 'ne';
       final dir = '$modelsDir/indicconformer-$code';
       if (!File('$dir/model.onnx').existsSync()) {
-        throw StateError('No recogniser at $dir — run tool/export_indicconformer.py');
+        throw StateError(
+          'No recogniser at $dir — run tool/export_indicconformer.py',
+        );
       }
       model = sherpa.OfflineModelConfig(
-        nemoCtc: sherpa.OfflineNemoEncDecCtcModelConfig(model: '$dir/model.onnx'),
+        nemoCtc: sherpa.OfflineNemoEncDecCtcModelConfig(
+          model: '$dir/model.onnx',
+        ),
         tokens: '$dir/tokens.txt',
         numThreads: 2,
         debug: false,
       );
     }
-    return Stt._(sherpa.OfflineRecognizer(
-        sherpa.OfflineRecognizerConfig(model: model)));
+    return Stt._(
+      sherpa.OfflineRecognizer(sherpa.OfflineRecognizerConfig(model: model)),
+    );
   }
 
   final sherpa.OfflineRecognizer _recognizer;
