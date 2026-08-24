@@ -11,26 +11,339 @@ through [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) over `dart:ffi`.
 ## Layout
 
 ```
-speech_pipeline/          pure Dart core — engine interfaces + orchestrator
+speech_pipeline/          pure Dart core — engines, orchestrator, PipelineSetup
+agent_cli/                finds and drives installed AI coding CLIs
 speech_pipeline_server/   headless CLI driving the core over pipes
 tool/fetch_models.sh      downloads models + native sherpa-onnx library
 ```
 
-The core is deliberately free of Flutter imports so the planned Flutter client
-can depend on it directly rather than reimplementing the loop.
+The core is deliberately free of Flutter imports, so the Flutter client
+(`../voicelab-app/`) depends on it directly rather than reimplementing the
+loop. `PipelineSetup` lives there too — model-path resolution is not
+CLI-specific, and the app assembling its own pipeline differently from the CLI
+is precisely how the two would drift apart.
 
 ## Stages
 
 | Stage | Implementation | Model |
 |---|---|---|
 | VAD | `SherpaVadEngine` | Silero VAD |
-| STT | `SherpaSttEngine` | SenseVoice (zh/en/ja/ko/yue) |
-| LLM | `OpenAiCompatibleLlm` | any `/chat/completions` endpoint |
-| TTS | `SherpaTtsEngine` | Kokoro v0.19, 24 kHz |
+| STT | `SherpaSttEngine` / `CloneSttEngine` | SenseVoice, IndicConformer |
+| LLM | `OpenAiCompatibleLlm` / `AnthropicLlm` | local or cloud, see below |
+| TTS | `SherpaTtsEngine` / `CloneTtsEngine` | Kokoro, Piper, OmniVoice |
 
 Every stage sits behind an interface in `lib/src/engines.dart`. Swapping
 SenseVoice for Whisper, or Kokoro for Piper, is a config change; swapping the
 local LLM in for the API one is a different `LlmEngine` implementation.
+
+### Choosing a model
+
+`llmProviders` is the catalog — llama.cpp, Ollama, OpenAI, Anthropic,
+OpenRouter, DeepSeek, Groq, NVIDIA NIM, and a hand-entered OpenAI-compatible
+endpoint. `LlmConfig.problem` says what a chosen provider is still missing, so
+a settings screen can render it next to the field rather than catching an
+exception; `buildLlm` refuses to construct an engine that isn't ready.
+
+From the environment:
+
+```bash
+export SP_LLM_PROVIDER=llamacpp     # or ollama, openai, anthropic, …
+export SP_LLM_MODEL=qwen3
+export SP_LLM_API_KEY=…             # not needed for local servers
+export SP_LLM_MAX_TOKENS=100
+```
+
+Setting only `SP_LLM_BASE_URL` still works and is read as a custom
+OpenAI-compatible endpoint, which is what it always meant.
+
+#### Finding and running a model
+
+Three ways in, all in the shared package so the CLI and the app behave alike.
+
+**`discoverLocalLlms()`** probes the ports the common servers use — llama.cpp
+(8080/8081/8082), Ollama (11434), LM Studio (1234), text-generation-webui
+(5000) — with `/v1/models`, and reports which answered *and which model each is
+serving*. Getting the port wrong is the single most common reason the assistant
+cannot reach a model, and the only symptom is a connection error, so asking the
+machine beats asking the user to remember.
+
+**`findLocalModels()`** lists the GGUF files already on disk, under `~/llm`,
+`~/models`, the LM Studio and Hugging Face caches, and `~/Downloads`. Weights
+are large and slow to fetch; nobody should download a second copy of something
+they have. Sharded models are listed once, by their first shard — loading shard
+two directly is never what anyone wants. Depth is bounded: a Hugging Face cache
+nests several levels deep and a Downloads folder can hold an entire source
+tree, so an unbounded walk turns a button press into a disk crawl.
+
+**`ManagedLlmServer`** runs llama.cpp as a child process and waits for
+`/health` before reporting success. It is deliberately not bundled: the binary
+is whatever the user points at, because shipping one would mean carrying a
+large native binary per platform, keeping it current, and it still would not
+work on a phone.
+
+```dart
+final server = ManagedLlmServer();
+final baseUrl = await server.start(
+  executable: '/home/you/llama.cpp/build/bin/llama-server',
+  modelPath: '/home/you/llm/gemma3-4b-q4.gguf',
+  port: 8080,
+);
+```
+
+Two details that matter more than they look:
+
+- **The process is a child, so it dies with the app.** A forgotten server
+  holding several gigabytes of weights is exactly the kind of thing nobody
+  notices until the machine is out of memory.
+- **A server that cannot load its weights prints why and exits.** Waiting for
+  the health timeout would throw that line away, so the exit is watched
+  alongside the probe and the failure carries what the process actually said.
+
+`--host 127.0.0.1` is not configurable. A local model is the private option;
+binding it to every interface would quietly put it on the network.
+
+**Running a binary from another platform.** `leadingArgs` puts arguments in
+front of the server's own, which is what lets a Windows app start a llama.cpp
+built inside WSL:
+
+```dart
+await server.start(
+  executable: r'C:\Windows\System32\wsl.exe',
+  leadingArgs: const ['-e', '/home/you/llama.cpp/build/bin/llama-server'],
+  modelPath: '/home/you/llm/gemma3-4b-q4.gguf',
+  verifyPaths: false, // those paths live inside WSL, not here
+);
+```
+
+**Reasoning models need care in a voice loop.** Qwen3 and its kin stream a
+`reasoning_content` channel before any answer. Reading that aloud would narrate
+the model thinking to itself, and on a voice-sized token budget the whole
+allowance goes on reasoning — the turn ends `finish_reason: length` with empty
+content and the assistant says nothing at all. `OpenAiCompatibleLlm` therefore
+asks the server to disable thinking by default and never yields the reasoning
+channel; `AnthropicLlm` skips `thinking_delta` for the same reason. Pass
+`disableThinking: false` if you are rendering a transcript rather than speaking
+one.
+
+**Small models are not multilingual enough for Nepali or Sanskrit.** Measured
+on Qwen3-1.7B-Q4 through this pipeline, same model, three languages:
+
+| Prompt | Reply |
+|---|---|
+| *What is the capital of Nepal?* | "The capital of Nepal is Kathmandu." ✅ |
+| *नेपालको राजधानी कुन हो?* | degenerate repetition, no answer |
+| *नेपालको सबैभन्दा अग्लो हिमाल कुन हो?* | "दामाड हिमाल" — invented |
+| *भारतस्य राजधानी का अस्ति?* | answers in Hindi, evasively |
+
+Gemma 3 4B, on the same hardware and the same questions, gets them right:
+
+| Prompt | Qwen3-1.7B | Gemma 3 4B |
+|---|---|---|
+| नेपालको राजधानी कुन हो? | repetition loop | काठमाडौं नेपालको राजधानी हो। ✅ |
+| सबैभन्दा अग्लो हिमाल? | "दामाड हिमाल" (invented) | Everest ✅ *(see below)* |
+| तपाईंलाई कस्तो छ? | तपाईंलाई खुशी छ. (wrong person) | म एकदमै राम्रो छु, धन्यवाद! ✅ |
+| भारतस्य राजधानी का अस्ति? | answers in Hindi | नई दिल्ली भारतस्य राजधानी अस्ति। ✅ |
+
+The recognisers and voices handle these languages; the smallest local LLMs do
+not. 4B is roughly where Nepali starts working — below that, use a cloud
+provider.
+
+### Automatic language detection
+
+`--auto-lang` detects the language per turn instead of fixing it up front.
+`--lang` still matters: it is where the conversation starts and where detection
+falls back when the evidence is thin.
+
+```
+· heard English
+you  > What is the capital of Nepal?
+The capital of Nepal is Kathmandu.
+· heard Nepali (whisper: hi)
+you  > नमस्ते नेपालको राजधानी कुन हो
+नमस्ते, नेपालको राजधानी काठमाडौं हो।
+· speaking Nepali · ne (94%, Devanagari markers 5 ne / 0 sa)
+```
+
+It works in two stages, because the two ends of the pipeline have very
+different evidence available.
+
+**Input — from the audio.** The recogniser has to be chosen before there is any
+transcript, so this uses Whisper's spoken-language identifier. Measured on five
+samples through this pipeline:
+
+| sample | actual | Whisper said |
+|---|---|---|
+| Kokoro | English | `en` OK |
+| OmniVoice | Nepali | `ne` OK |
+| Piper Chitwan | Nepali | `hi` wrong |
+| Sanskrit A | Sanskrit | `si` wrong |
+| Sanskrit B | Sanskrit | `pa` wrong |
+
+Two out of five — **not good enough to route on directly.** But every error
+stayed inside the Indic family, which makes the Latin-against-Indic split 5 out
+of 5. So that is the only split it is trusted with, and it is right in practice
+even when the code it returns is wrong: the run above shows Whisper reporting
+Hindi for Nepali audio and the turn still reaching the Nepali recogniser.
+
+**Output — from the text.** `detectLanguage` reads the reply. Script settles
+English; Nepali and Sanskrit share Devanagari, so those are separated on
+function words (`छ`, `हो`, `को`, `ले`) against Sanskrit's (`अस्ति`, `इति`,
+`च`, visarga `ः`, word-final `म्`). It returns a confidence, and
+`LanguageRoutingTtsEngine` acts only on a confident guess — a two-word reply
+carries little evidence, and flickering between voices is worse than staying
+put.
+
+This fixes a plainer bug too, one that has nothing to do with switching
+languages: **the reply's language is the model's choice, not the
+configuration's.** Ask an English-configured assistant something in Nepali and
+it may well answer in Nepali, which the English voice then reads as gibberish.
+
+**The honest limitation:** Whisper never once returned `sa`. Sanskrit *speech*
+therefore routes to the Nepali recogniser in auto mode — select Sanskrit
+explicitly with `--lang sa`. Sanskrit *replies* are detected correctly, because
+that decision is made from text. Hindi and Marathi are also Devanagari and not
+in this pipeline's language set, so they read as Nepali; detection can only
+choose among languages the pipeline can actually speak.
+
+Auto mode loads every language's models at once, and `verify()` checks for all
+of them rather than only the starting language.
+
+### Replaying a recording at speaking speed
+
+A file is read as fast as the disk allows, so a whole conversation reaches the
+VAD within milliseconds and every turn barges in on the one before it — which
+looks exactly like a bug and is not one. `--realtime` paces the input the way a
+microphone would:
+
+```bash
+dart run speech_pipeline_server/bin/talk.dart --auto-lang --realtime \
+  --input conversation.raw --output reply.wav --native-lib native
+```
+
+### Mixed scripts, and why the pipeline repairs them
+
+Gemma's Everest answer came back as **`एভারেস্ট`** — the word spelled half in
+Devanagari and half in Bengali, inside an otherwise clean Nepali sentence. It
+is a tokenizer artifact and it is reproducible. Prompting does not fix it:
+demanding Devanagari suppresses the mixing only by making the model evade the
+question.
+
+Fed straight to Piper, that word costs **6.1 seconds of audio instead of 2.4** —
+the espeak front-end spells the stray letters out one at a time.
+
+`repairDevanagari` fixes it exactly. Unicode lays the Brahmic blocks out in
+parallel — Devanagari क is U+0915, Bengali ক is U+0995 — so shifting the
+sibling letters down by their block offset yields `एभारेस्ट`, the right word.
+`ScriptGuardTtsEngine` applies this on the audio path only, so captions and
+history keep the model's literal output, and it reports every repair rather
+than silently papering over which models need replacing.
+
+Only Bengali, Gurmukhi, Gujarati and Oriya are transposed: they share
+Devanagari's phonemic inventory, so the mapping is faithful. Tamil and its
+neighbours do not — Tamil has no aspirate or voiced-stop letters — so those are
+left intact and reported instead of being mapped into sounds the model never
+wrote. Nothing is ever dropped: a mispronounced word is recoverable, a deleted
+clause is not.
+
+### Answering through a CLI you already have
+
+Someone using `claude` or `codex` daily has already signed in. `CliLlmEngine`
+drives that CLI as the LLM stage, so the assistant works with no API key pasted
+anywhere and no second subscription.
+
+```dart
+final agents = await discoverCliAgents();
+final llm = CliLlmEngine(agents.first);
+```
+
+The `agent_cli` package does the finding and the driving. Its process layer
+follows the design proven in chitragupta-app: one `CommandRunner` abstraction
+with a native and a WSL implementation, so the same code works on Linux, on
+Windows, and on a Windows app reaching into a WSL distribution.
+
+**Measured on this machine, and the reason this is the convenient option rather
+than the fast one:**
+
+| backend | first text |
+|---|---|
+| llama.cpp, Qwen3-1.7B | 95 ms |
+| llama.cpp, Gemma 3 4B | 257 ms |
+| Claude Code CLI | 5542 ms |
+| Codex CLI | 7407 ms |
+
+Every turn is a fresh process that loads the tool list, hooks and project
+instructions before it answers — one measured invocation created 8011 cache
+tokens before producing five tokens of reply. For a spoken assistant those
+seconds are audible silence.
+
+Three details that decide whether this works at all:
+
+- **Lookups go through a login shell.** These CLIs install into
+  `~/.local/bin`, which `~/.profile` puts on PATH. A non-login shell never
+  sources it, so a bare `which` reports nothing installed. This applies on
+  POSIX as much as inside WSL — and `command -v` is a shell builtin with no
+  executable to run, so `Process.run('command', …)` fails outright.
+- **Tools are turned off and the system prompt is replaced.** These are coding
+  agents. Left with their own prompt they will read files and run commands
+  instead of answering; a voice assistant that edits a repository because you
+  thought aloud is not what anyone asked for.
+- **stdin is closed immediately.** A CLI that reads stdin when it is not a
+  terminal waits forever for input that is never coming — `codex exec` says so
+  out loud and then hangs.
+
+Each call is stateless, with the conversation rendered into the prompt. The
+CLIs do have resume modes, but leaning on them would move the conversation's
+memory into the CLI's own session store, where the pipeline cannot trim it and
+where it would drift from the history the caller believes it has.
+
+### Speaking in a cloned voice
+
+`CloneTtsEngine` answers through `CloneService` — audio.cpp over `dart:ffi` —
+so the assistant replies in a voice cloned from a recording. Pair it with
+`CloneSttEngine` and both share one engine isolate: the native weights are tens
+of megabytes and synthesis blocks its isolate outright, so a second copy would
+double both the memory and the warm-up.
+
+```bash
+dart run speech_pipeline_server/bin/talk.dart --lang ne --timing \
+  --input you.raw --output reply.wav --native-lib native \
+  --voice-model ~/audiocpp-models/OmniVoice-GGUF/omnivoice-q8_0.gguf \
+  --voice-lib ~/audio.cpp/build-vk/bin \
+  --voice-backend vulkan \
+  --voice-ref you.wav --voice-ref-text "what the recording says"
+```
+
+`--voice-ref-text` is not optional in spirit: OmniVoice conditions on the
+reference transcript as well as its audio, and omitting it measurably weakens
+the clone.
+
+#### The voice library
+
+Cloning is not limited to one person. `VoiceLibrary` holds any number of named
+voices — yours, a friend's, a narrator's — alongside `VoiceProfile.builtIn`,
+the model's own speaker, which needs no recording and so is the one voice that
+works before anything has been recorded.
+
+```bash
+dart run speech_pipeline_server/bin/talk.dart --list-voices
+#   default            Default voice  ·  the model's own speaker
+#   damodar            Damodar        ·  "नमस्ते, मेरो नाम दामोदर हो"
+#   narrator           Narrator       ·  no transcript
+
+dart run speech_pipeline_server/bin/talk.dart --voice damodar …
+```
+
+Reference audio is copied into the library rather than referenced where it was
+recorded: a recorder writes to a cache directory the OS may empty, so a profile
+pointing there would work right up until the day it silently did not. A voice
+whose recording has gone missing is dropped at load, so selecting it fails
+early rather than inside the engine, mid-reply.
+
+Unlike the sherpa engines this yields one chunk per utterance rather than a
+stream. OmniVoice is non-autoregressive — 32 MaskGIT unmasking steps over the
+whole sequence at once — so there is no prefix to emit early. Splitting the
+reply into sentences, which the orchestrator already does, is what keeps
+time-to-first-audio bounded.
 
 ## Languages
 
@@ -231,9 +544,24 @@ arecord -f S16_LE -r 16000 -c 1 -t raw \
 Or drive it from a recording and write the reply to a file:
 
 ```bash
+# A .wav becomes the raw 16 kHz mono the pipeline reads. --pad matters: the
+# VAD only closes a turn after hearing enough silence, so a file that ends the
+# instant the speaker stops leaves the last utterance open.
+dart run speech_pipeline_server/bin/to_raw.dart --in you.wav --out you.raw
+
 dart run speech_pipeline_server/bin/talk.dart \
-  --native-lib native --input sample.raw --output reply.wav
+  --native-lib native --input you.raw --output reply.wav --timing
 ```
+
+`--timing` reports each turn measured from the moment the user stopped talking,
+which is when they actually start waiting:
+
+```
+transcript 93ms · first token 338ms · first audio 3118ms · turn 3123ms
+```
+
+Time to first audio is the number that decides whether the assistant feels
+responsive, and on a CPU build it is dominated by synthesis, not by the model.
 
 Transcripts and live token deltas go to stderr, so they stay readable while
 stdout carries the audio.
@@ -302,3 +630,8 @@ boundary and tighten up for the rest of the reply.
   the Flutter SDK on `PATH`, but running it does not.
 - No acoustic echo cancellation in the CLI path — use headphones, or the
   assistant will hear itself and barge in on its own reply.
+- Cloned-voice synthesis is only conversational on a GPU backend. A full turn
+  measured through this pipeline on CPU: transcript 4197ms, first token 4785ms,
+  **first audio 20675ms**, 58.4s for 6.5s of speech — RTF 9.03. The same engine
+  over Vulkan synthesises the same Nepali sentence at RTF 0.129. Treat the CPU
+  path as a correctness fallback, not a usable one.
