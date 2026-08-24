@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:args/args.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import 'package:speech_pipeline/speech_pipeline.dart';
-import 'package:speech_pipeline_server/setup.dart';
 
 /// Transcribes a .wav file — a real recording, not synthesised speech.
 ///
@@ -19,8 +18,11 @@ Future<void> main(List<String> argv) async {
     ..addOption('lang', defaultsTo: 'en', allowed: ['en', 'ne', 'sa'])
     ..addOption('models', defaultsTo: 'models')
     ..addOption('native-lib')
-    ..addFlag('whole',
-        help: 'Skip the VAD and decode the file in one go.', negatable: false);
+    ..addFlag(
+      'whole',
+      help: 'Skip the VAD and decode the file in one go.',
+      negatable: false,
+    );
 
   final args = parser.parse(argv);
   final input = File(args.option('input')!);
@@ -56,8 +58,10 @@ Future<void> main(List<String> argv) async {
   }
 
   final seconds = wave.samples.length / wave.sampleRate;
-  stdout.writeln('${input.path}: ${seconds.toStringAsFixed(2)}s '
-      '@ ${wave.sampleRate} Hz');
+  stdout.writeln(
+    '${input.path}: ${seconds.toStringAsFixed(2)}s '
+    '@ ${wave.sampleRate} Hz',
+  );
   stdout.writeln('${setup.language.label} — ${setup.activeSttModel}\n');
 
   final audio = resample(wave.samples, wave.sampleRate, kSampleRate);
@@ -80,8 +84,9 @@ Future<void> main(List<String> argv) async {
     if (event case SpeechEnded(:final samples)) {
       final at = DateTime.now();
       final text = await stt.transcribe(samples);
-      stdout.writeln('[${++n}] ${(samples.length / kSampleRate)
-          .toStringAsFixed(2)}s, ${_ms(at)}: $text');
+      stdout.writeln(
+        '[${++n}] ${(samples.length / kSampleRate).toStringAsFixed(2)}s, ${_ms(at)}: $text',
+      );
     }
   }
   if (n == 0) stderr.writeln('VAD found no speech — is the recording silent?');

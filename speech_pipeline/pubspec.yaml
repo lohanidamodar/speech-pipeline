@@ -8,9 +8,14 @@ environment:
   sdk: ^3.12.0
 
 dependencies:
+  agent_cli:
+    path: ../agent_cli
   dart_onnx: ^0.1.1
   http: ^1.2.0
-  sherpa_onnx: ^1.13.4
+  # Exact, not caret: the Dart bindings resolve native symbols by name, so the
+  # package and the sherpa-onnx library on disk must be the same release.
+  # A newer package against older binaries fails at lookup, not at compile.
+  sherpa_onnx: 1.13.4
 
 dev_dependencies:
   lints: ^5.0.0

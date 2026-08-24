@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:args/args.dart';
 import 'package:speech_pipeline/speech_pipeline.dart';
-import 'package:speech_pipeline_server/setup.dart';
 
 /// Round-trips the native stages without touching the LLM: synthesise a known
 /// sentence, feed the audio back through VAD and STT, and check what comes out.
@@ -14,8 +13,10 @@ Future<void> main(List<String> argv) async {
   final parser = ArgParser()
     ..addOption('models', defaultsTo: 'models')
     ..addOption('native-lib')
-    ..addOption('text',
-        defaultsTo: 'The quick brown fox jumps over the lazy dog.')
+    ..addOption(
+      'text',
+      defaultsTo: 'The quick brown fox jumps over the lazy dog.',
+    )
     ..addOption('threads', defaultsTo: '2');
   final args = parser.parse(argv);
 
@@ -62,17 +63,18 @@ Future<void> main(List<String> argv) async {
 
   final audio = _concat(chunks);
   final durationSec = audio.length / tts.sampleRate;
-  stdout.writeln('  ${chunks.length} chunks, '
-      '${durationSec.toStringAsFixed(2)}s of audio');
+  stdout.writeln(
+    '  ${chunks.length} chunks, '
+    '${durationSec.toStringAsFixed(2)}s of audio',
+  );
   stdout.writeln('  time to first chunk: ${firstChunkAt!.inMilliseconds}ms');
-  stdout.writeln('  total: ${_ms(started)} '
-      '(RTF ${(DateTime.now().difference(started).inMilliseconds / 1000 / durationSec).toStringAsFixed(2)})');
+  stdout.writeln(
+    '  total: ${_ms(started)} '
+    '(RTF ${(DateTime.now().difference(started).inMilliseconds / 1000 / durationSec).toStringAsFixed(2)})',
+  );
 
   await File('selftest.wav').writeAsBytes([
-    ...wavHeader(
-      sampleRate: tts.sampleRate,
-      dataLength: audio.length * 2,
-    ),
+    ...wavHeader(sampleRate: tts.sampleRate, dataLength: audio.length * 2),
     ...float32ToPcm16(audio),
   ]);
   stdout.writeln('  wrote selftest.wav');
@@ -82,9 +84,11 @@ Future<void> main(List<String> argv) async {
   started = DateTime.now();
   final stt = await SherpaSttEngine.spawn(
     SttConfig.senseVoice(
-      model: '${setup.modelsDir}/'
+      model:
+          '${setup.modelsDir}/'
           'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/model.int8.onnx',
-      tokens: '${setup.modelsDir}/'
+      tokens:
+          '${setup.modelsDir}/'
           'sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tokens.txt',
       nativeLibraryPath: setup.nativeLibraryPath,
     ),

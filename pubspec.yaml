@@ -5,5 +5,6 @@ environment:
   sdk: ^3.12.0
 
 workspace:
+  - agent_cli
   - speech_pipeline
   - speech_pipeline_server
