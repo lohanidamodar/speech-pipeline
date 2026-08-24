@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Cloning POC</title>
+<style>
+  :root{--bg:#0e1014;--panel:#161920;--line:#252a35;--fg:#e7eaf0;--dim:#8b93a4;
+        --accent:#5b9dff;--ok:#3fbf7f;--rec:#e0455f}
+  @media(prefers-color-scheme:light){:root{--bg:#f6f7f9;--panel:#fff;--line:#e2e5eb;--fg:#181b21;--dim:#5e6675}}
+  *{box-sizing:border-box}
+  body{margin:0;padding:2rem 1rem;background:var(--bg);color:var(--fg);
+       font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  main{max-width:740px;margin:0 auto}
+  h1{font-size:1.3rem;margin:0 0 .2rem}
+  .sub{color:var(--dim);font-size:.88rem;margin:0 0 1.4rem}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+          padding:1.1rem 1.2rem;margin-bottom:.95rem}
+  h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);
+     margin:0 0 .85rem;font-weight:650}
+  label{display:block;font-size:.8rem;color:var(--dim);margin:.7rem 0 .3rem}
+  textarea,input[type=text],select{width:100%;padding:.55rem .7rem;border-radius:8px;
+    font:inherit;background:var(--bg);color:var(--fg);border:1px solid var(--line)}
+  textarea{min-height:64px;resize:vertical}
+  button{font:inherit;font-weight:600;padding:.55rem 1.1rem;border-radius:8px;
+    border:1px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.42;cursor:not-allowed}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#06101f}
+  button.rec{background:var(--rec);border-color:var(--rec);color:#fff}
+  .row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+  audio{width:100%;margin-top:.75rem}
+  .meter{height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:.75rem}
+  .meter>i{display:block;height:100%;width:0;background:var(--ok);transition:width .08s}
+  .status{font-size:.84rem;color:var(--dim);margin-top:.75rem;min-height:1.2em}
+  .status.err{color:#ff7d7d}.status.ok{color:var(--ok)}
+  .hint{font-size:.77rem;color:var(--dim);margin-top:.4rem}
+  .stats{display:flex;gap:1.4rem;margin-top:.8rem;font-size:.82rem;color:var(--dim);flex-wrap:wrap}
+  .stats b{color:var(--fg);font-variant-numeric:tabular-nums}
+  .pill{font-size:.72rem;padding:.12rem .5rem;border-radius:20px;border:1px solid var(--line);color:var(--dim)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Voice cloning</h1>
+  <p class="sub">Record a reference clip, then make it say something else.
+     Dart → FFI → audio.cpp. <span id="engine" class="pill">connecting…</span></p>
+
+  <section>
+    <h2>1 · Reference recording</h2>
+    <div class="row">
+      <button id="rec" class="rec">● Record</button>
+      <button id="stop" disabled>■ Stop</button>
+      <span id="dur" class="pill">0.0s</span>
+    </div>
+    <div class="meter"><i id="level"></i></div>
+    <p class="hint">5–10 seconds of clear speech is plenty.</p>
+    <div id="recStatus" class="status"></div>
+    <div class="row" style="margin-top:.5rem">
+      <button id="diag" style="font-size:.8rem;padding:.35rem .8rem">Diagnose microphone</button>
+    </div>
+    <pre id="diagOut" style="display:none;font-size:.75rem;color:var(--dim);
+      background:var(--bg);border:1px solid var(--line);border-radius:7px;
+      padding:.6rem .7rem;margin-top:.6rem;white-space:pre-wrap;line-height:1.5"></pre>
+    <audio id="playback" controls hidden></audio>
+    <label for="refText">Transcript of what you just said
+      <span id="sttNote" class="pill" style="margin-left:.4rem">auto</span></label>
+    <input type="text" id="refText" placeholder="Fills in automatically after recording">
+  </section>
+
+  <section>
+    <h2>2 · Text to speak in that voice</h2>
+    <textarea id="text">नमस्ते। मेरो नाम राम हो।</textarea>
+    <div class="row" style="margin-top:.7rem">
+      <select id="lang" style="max-width:160px">
+        <option value="">auto</option>
+        <option value="npi" selected>Nepali</option>
+        <option value="sa">Sanskrit</option>
+        <option value="en">English</option>
+      </select>
+      <button id="clone" class="primary">Clone voice</button>
+      <button id="plain">Without cloning</button>
+    </div>
+    <div id="status" class="status"></div>
+  </section>
+
+  <section>
+    <h2>3 · Result</h2>
+    <audio id="out" controls hidden></audio>
+    <div class="stats" id="stats" hidden>
+      <span>audio <b id="sAudio">–</b></span>
+      <span>generated in <b id="sMs">–</b></span>
+      <span>RTF <b id="sRtf">–</b></span>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let stream, recorder, recChunks = [], startedAt = 0, timer = null, refWav = null;
+
+const recSay = (m, c='') => { const e = $('recStatus'); e.textContent = m; e.className = 'status ' + c; };
+
+fetch('/api/status').then(r => r.json()).then(s => {
+  $('engine').textContent = `${s.backend} · warmup ${s.warmupMs}ms`;
+}).catch(() => $('engine').textContent = 'offline');
+
+// Capture with MediaRecorder, then decode to PCM in the browser and encode WAV.
+// ScriptProcessorNode is deprecated and already removed in some browsers, and
+// decoding here keeps the server free of any media tooling.
+async function startRec() {
+  if (!window.isSecureContext) {
+    recSay('Blocked: this page is not a secure context. Use https:// or localhost.', 'err');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    recSay('This browser exposes no microphone API here.', 'err');
+    return;
+  }
+  recSay('Requesting microphone…');
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }});
+  } catch (e) {
+    recSay(`Microphone denied (${e.name}). Tap "Diagnose microphone" to see which layer is blocking it.`, 'err');
+    diagnose();
+    return;
+  }
+
+  recChunks = [];
+  let mime = '';
+  for (const m of ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus']) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) { mime = m; break; }
+  }
+  try {
+    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  } catch (e) {
+    recSay('MediaRecorder unavailable: ' + e.message, 'err');
+    stream.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  recorder.onstop = finish;
+  recorder.start();
+
+  startedAt = performance.now();
+  $('rec').disabled = true; $('stop').disabled = false;
+  timer = setInterval(() => {
+    const s = (performance.now() - startedAt) / 1000;
+    $('dur').textContent = s.toFixed(1) + 's';
+    $('level').style.width = Math.min(100, (s / 10) * 100) + '%';
+  }, 100);
+  recSay('Recording…', 'ok');
+}
+
+function stopRec() {
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  $('rec').disabled = false; $('stop').disabled = true;
+  clearInterval(timer);
+}
+
+async function finish() {
+  stream.getTracks().forEach(t => t.stop());
+  $('level').style.width = '0';
+  const blob = new Blob(recChunks, { type: recorder.mimeType || 'audio/webm' });
+  if (!blob.size) { recSay('Nothing was captured.', 'err'); return; }
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    const decoded = await ac.decodeAudioData(await blob.arrayBuffer());
+    const pcm = decoded.getChannelData(0);
+    refWav = encodeWav(pcm, decoded.sampleRate);
+    $('playback').src = URL.createObjectURL(new Blob([refWav], {type:'audio/wav'}));
+    $('playback').hidden = false;
+    recSay(`Captured ${decoded.duration.toFixed(1)}s at ${decoded.sampleRate} Hz`, 'ok');
+    ac.close();
+    transcribe();
+  } catch (e) {
+    recSay('Could not decode the recording: ' + e.message, 'err');
+  }
+}
+
+function encodeWav(s, rate) {
+  const b = new ArrayBuffer(44 + s.length * 2), v = new DataView(b);
+  const tag = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  tag(0,'RIFF'); v.setUint32(4, 36 + s.length*2, true); tag(8,'WAVE'); tag(12,'fmt ');
+  v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,rate,true); v.setUint32(28,rate*2,true); v.setUint16(32,2,true);
+  v.setUint16(34,16,true); tag(36,'data'); v.setUint32(40,s.length*2,true);
+  let o = 44;
+  for (let i = 0; i < s.length; i++, o += 2)
+    v.setInt16(o, Math.max(-1, Math.min(1, s[i])) * 32767, true);
+  return b;
+}
+
+// The reference transcript matters for clone quality, so it is recognised
+// rather than typed — nobody wants to type Devanagari on a phone.
+async function transcribe() {
+  if (!refWav) return;
+  $('sttNote').textContent = 'listening…';
+  try {
+    const res = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: {'content-type':'application/octet-stream','x-lang':$('lang').value || 'ne'},
+      body: refWav,
+    });
+    if (!res.ok) {
+      $('sttNote').textContent = 'unavailable';
+      recSay('Transcription unavailable: ' + (await res.text()).slice(0,160), 'err');
+      return;
+    }
+    const text = (await res.text()).trim();
+    $('sttNote').textContent = text ? `${res.headers.get('x-elapsed-ms')}ms` : 'no speech';
+    if (text) $('refText').value = text;
+  } catch (e) {
+    $('sttNote').textContent = 'failed';
+  }
+}
+
+// NotAllowedError with no prompt usually means the block is above the page —
+// the browser app itself lacks OS microphone permission, or the site default
+// is set to Block. These three checks separate those cases.
+async function diagnose() {
+  const out = $('diagOut');
+  out.style.display = 'block';
+  const lines = [];
+  lines.push('origin        ' + location.origin);
+  lines.push('secureContext ' + window.isSecureContext + (window.isSecureContext ? '' : '   <- page is not trusted'));
+  lines.push('mediaDevices  ' + (navigator.mediaDevices ? 'present' : 'MISSING'));
+
+  if (navigator.permissions && navigator.permissions.query) {
+    try {
+      const st = await navigator.permissions.query({ name: 'microphone' });
+      lines.push('permission    ' + st.state +
+        (st.state === 'denied' ? '   <- blocked; see below' : ''));
+    } catch (e) { lines.push('permission    unqueryable (' + e.name + ')'); }
+  } else {
+    lines.push('permission    Permissions API unavailable');
+  }
+
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    const mics = devs.filter(d => d.kind === 'audioinput');
+    lines.push('audio inputs  ' + mics.length +
+      (mics.length && !mics[0].label ? '  (labels hidden until permission granted)' : ''));
+    if (!mics.length) lines.push('              <- OS is not exposing any microphone to this browser');
+  } catch (e) { lines.push('audio inputs  failed (' + e.name + ')'); }
+
+  lines.push('');
+  lines.push('If permission is "denied" but you were never asked, the browser');
+  lines.push('app itself lacks mic access from the OS:');
+  lines.push('  Android  Settings > Apps > (your browser) > Permissions > Microphone');
+  lines.push('  iOS      Settings > (your browser) > Microphone');
+  lines.push('Then reset this site: tap the padlock in the address bar >');
+  lines.push('Permissions / Site settings > Microphone > Allow or Reset.');
+  out.textContent = lines.join('\n');
+}
+
+const say = (m, c='') => { const s = $('status'); s.textContent = m; s.className = 'status ' + c; };
+
+async function run(useClone) {
+  if (useClone && !refWav) { say('Record a reference clip first.', 'err'); return; }
+  $('clone').disabled = $('plain').disabled = true;
+  say(useClone ? 'Cloning…' : 'Synthesising…');
+  try {
+    const res = await fetch('/api/clone', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-text': encodeURIComponent($('text').value),
+        'x-ref-text': encodeURIComponent($('refText').value),
+        'x-lang': $('lang').value,
+      },
+      body: useClone ? refWav : new ArrayBuffer(0),
+    });
+    if (!res.ok) { say('Failed: ' + (await res.text()).slice(0,300), 'err'); return; }
+    const blob = await res.blob();
+    $('out').src = URL.createObjectURL(blob); $('out').hidden = false;
+    $('stats').hidden = false;
+    $('sAudio').textContent = res.headers.get('x-audio-seconds') + 's';
+    $('sMs').textContent = res.headers.get('x-elapsed-ms') + 'ms';
+    $('sRtf').textContent = res.headers.get('x-rtf');
+    say('Done.', 'ok');
+    $('out').play().catch(() => {});
+  } catch (e) { say('Error: ' + e.message, 'err'); }
+  finally { $('clone').disabled = $('plain').disabled = false; }
+}
+
+$('diag').onclick = () => diagnose();
+$('rec').onclick = () => startRec().catch(e => recSay('Mic error: ' + e.message, 'err'));
+$('stop').onclick = stopRec;
+$('refText').addEventListener('focus', () => { $('sttNote').textContent = 'edit as needed'; });
+$('lang').addEventListener('change', transcribe);
+$('clone').onclick = () => run(true);
+$('plain').onclick = () => run(false);
+</script>
+</body>
+</html>

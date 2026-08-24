@@ -1,0 +1,12 @@
+.dart_tool/
+.packages
+pubspec.lock
+
+# Fetched by tool/fetch_models.sh — hundreds of MB, never committed.
+models/
+native/
+
+*.wav
+*.raw
+samples/
+voice_clone_poc/.dart_tool/

@@ -1,0 +1,19 @@
+name: speech_pipeline_server
+description: Headless CLI and WebSocket server that drives the speech_pipeline core.
+version: 0.1.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  args: ^2.5.0
+  shelf: ^1.4.0
+  shelf_web_socket: ^3.0.0
+  speech_pipeline: ^0.1.0
+  web_socket_channel: ^3.0.0
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.0

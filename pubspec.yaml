@@ -1,0 +1,9 @@
+name: speech_pipeline_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.12.0
+
+workspace:
+  - speech_pipeline
+  - speech_pipeline_server

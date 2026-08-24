@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Cloning — speech-pipeline</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36;
+    --fg: #e6e9ef; --dim: #949cad; --accent: #5b9dff; --ok: #3fbf7f; --warn: #e0a458;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f7f8fa; --panel:#fff; --line:#e3e6ec; --fg:#1a1d24; --dim:#5f6775; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 .25rem; }
+  .sub { color: var(--dim); margin: 0 0 1.5rem; font-size: .9rem; }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 1.1rem 1.2rem; margin-bottom: 1rem;
+  }
+  h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .07em;
+       color: var(--dim); margin: 0 0 .85rem; font-weight: 600; }
+  label { display: block; font-size: .82rem; color: var(--dim); margin: .7rem 0 .3rem; }
+  textarea, input[type=text], select {
+    width: 100%; padding: .55rem .7rem; border-radius: 7px; font: inherit;
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+  }
+  textarea { min-height: 68px; resize: vertical; }
+  button {
+    font: inherit; font-weight: 550; padding: .55rem 1.1rem; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; }
+  button.rec { background: #d0405a; border-color: #d0405a; color: #fff; }
+  .row { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+  audio { width: 100%; margin-top: .8rem; }
+  .meter { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: .8rem; }
+  .meter > i { display: block; height: 100%; width: 0; background: var(--ok); transition: width .08s; }
+  .status { font-size: .85rem; color: var(--dim); margin-top: .8rem; min-height: 1.2em; }
+  .status.err { color: #ff7a7a; }
+  .status.ok { color: var(--ok); }
+  .hint { font-size: .78rem; color: var(--dim); margin-top: .45rem; }
+  .badge { font-size: .72rem; padding: .1rem .45rem; border-radius: 4px;
+           border: 1px solid var(--line); color: var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Voice cloning</h1>
+  <p class="sub">Record a reference clip, then have it speak anything. Runs locally — nothing leaves this machine.</p>
+
+  <section>
+    <h2>1 · Record your voice</h2>
+    <div class="row">
+      <button id="rec" class="rec">● Record</button>
+      <button id="stop" disabled>■ Stop</button>
+      <span id="dur" class="badge">0.0s</span>
+    </div>
+    <div class="meter"><i id="level"></i></div>
+    <p class="hint">Aim for 5–10 seconds of clear speech. Longer is not better.</p>
+    <audio id="playback" controls hidden></audio>
+
+    <label for="refText">What you said (required for Nepali / Sanskrit)</label>
+    <input type="text" id="refText" placeholder="Transcript of the recording above">
+  </section>
+
+  <section>
+    <h2>2 · Text to speak in your voice</h2>
+    <div class="row">
+      <select id="lang" style="max-width:230px">
+        <option value="en">English — Qwen3-TTS</option>
+        <option value="ne">Nepali — OmniVoice</option>
+        <option value="sa">Sanskrit — OmniVoice</option>
+      </select>
+      <button id="clone" class="primary" disabled>Clone voice</button>
+    </div>
+    <label for="text">Text</label>
+    <textarea id="text">This sentence was never spoken by the reference speaker.</textarea>
+    <div id="status" class="status"></div>
+  </section>
+
+  <section>
+    <h2>3 · Result</h2>
+    <audio id="out" controls hidden></audio>
+    <div id="outInfo" class="status"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let ctx, stream, node, chunks = [], recording = false, startedAt = 0, refWav = null;
+
+// Capture raw PCM via Web Audio rather than MediaRecorder: MediaRecorder emits
+// webm/opus, and decoding that server-side would mean an ffmpeg dependency.
+// Encoding WAV here keeps the server free of media tooling.
+async function startRec() {
+  stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+  });
+  ctx = new AudioContext();
+  const src = ctx.createMediaStreamSource(stream);
+  node = ctx.createScriptProcessor(4096, 1, 1);
+  chunks = [];
+  node.onaudioprocess = e => {
+    if (!recording) return;
+    const buf = e.inputBuffer.getChannelData(0);
+    chunks.push(new Float32Array(buf));
+    let peak = 0;
+    for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i]));
+    $('level').style.width = Math.min(100, peak * 160) + '%';
+    $('dur').textContent = ((performance.now() - startedAt) / 1000).toFixed(1) + 's';
+  };
+  src.connect(node); node.connect(ctx.destination);
+  recording = true; startedAt = performance.now();
+  $('rec').disabled = true; $('stop').disabled = false;
+  setStatus('Recording…');
+}
+
+function stopRec() {
+  recording = false;
+  node && node.disconnect();
+  stream && stream.getTracks().forEach(t => t.stop());
+  $('rec').disabled = false; $('stop').disabled = true;
+  $('level').style.width = '0';
+
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const pcm = new Float32Array(total);
+  let o = 0; for (const c of chunks) { pcm.set(c, o); o += c.length; }
+
+  refWav = encodeWav(pcm, ctx.sampleRate);
+  const url = URL.createObjectURL(new Blob([refWav], { type: 'audio/wav' }));
+  $('playback').src = url; $('playback').hidden = false;
+  $('clone').disabled = total === 0;
+  setStatus(`Captured ${(total / ctx.sampleRate).toFixed(1)}s at ${ctx.sampleRate} Hz`, 'ok');
+}
+
+function encodeWav(samples, rate) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const tag = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  tag(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); tag(8, 'WAVE');
+  tag(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+  v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  tag(36, 'data'); v.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++, off += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    v.setInt16(off, s * 32767, true);
+  }
+  return buf;
+}
+
+function setStatus(msg, cls = '') { const s = $('status'); s.textContent = msg; s.className = 'status ' + cls; }
+
+async function clone() {
+  const lang = $('lang').value;
+  const refText = $('refText').value.trim();
+  if (lang !== 'en' && !refText) {
+    setStatus('OmniVoice needs the transcript of your recording.', 'err'); return;
+  }
+  $('clone').disabled = true;
+  setStatus('Synthesising… first run loads ~1.5 GB of weights, so allow a minute.');
+  const t0 = performance.now();
+  try {
+    const res = await fetch('/api/clone', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'x-lang': lang,
+        'x-text': encodeURIComponent($('text').value),
+        'x-ref-text': encodeURIComponent(refText),
+      },
+      body: refWav,
+    });
+    if (!res.ok) { setStatus('Failed: ' + (await res.text()).slice(0, 300), 'err'); return; }
+    const blob = await res.blob();
+    $('out').src = URL.createObjectURL(blob); $('out').hidden = false;
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    setStatus('Done.', 'ok');
+    $('outInfo').textContent = `${(blob.size / 1024).toFixed(0)} KB · ${secs}s round trip`;
+    $('out').play().catch(() => {});
+  } catch (e) {
+    setStatus('Error: ' + e.message, 'err');
+  } finally { $('clone').disabled = false; }
+}
+
+$('rec').onclick = () => startRec().catch(e => setStatus('Mic error: ' + e.message, 'err'));
+$('stop').onclick = stopRec;
+$('clone').onclick = clone;
+</script>
+</body>
+</html>
