@@ -108,6 +108,25 @@ void main() {
       },
     );
 
+    test('never speaks inline reasoning either', () async {
+      // The other half of the problem: a server that does not separate the
+      // channels puts <think> straight into content. Split across deltas, as
+      // it really arrives.
+      final m = sseClient([
+        openAiFrame({'content': '<thi'}),
+        openAiFrame({'content': 'nk>the user asked about Nepal'}),
+        openAiFrame({'content': '</think>Kathmandu.'}),
+        '[DONE]',
+      ]);
+      final llm = OpenAiCompatibleLlm(
+        baseUrl: 'http://x/v1',
+        model: 'm',
+        client: m.client,
+      );
+
+      expect(await llm.respond([Message.user('hi')]).join(), 'Kathmandu.');
+    });
+
     test('falls back to message.content when a proxy sends no delta', () async {
       final m = sseClient([
         jsonEncode({

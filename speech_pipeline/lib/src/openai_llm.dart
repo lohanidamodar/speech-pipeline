@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 import 'engines.dart';
+import 'thinking_filter.dart';
 
 /// Streaming client for any OpenAI-compatible `/chat/completions` endpoint —
 /// the Anthropic-compatible gateways, Ollama, llama.cpp's server, vLLM, Groq.
@@ -20,6 +21,7 @@ class OpenAiCompatibleLlm implements LlmEngine {
     this.maxTokens = 512,
     this.disableThinking = false,
     this.extraHeaders = const {},
+    this.assumeLeadingThinking = false,
     http.Client? client,
   }) : _client = client ?? http.Client();
 
@@ -43,6 +45,10 @@ class OpenAiCompatibleLlm implements LlmEngine {
 
   /// Provider-specific headers — OpenRouter's attribution pair, for instance.
   final Map<String, String> extraHeaders;
+
+  /// See [ThinkingFilter.assumeLeadingThinking]. Needed for models that emit a
+  /// closing tag with no opening one.
+  final bool assumeLeadingThinking;
 
   final http.Client _client;
 
@@ -88,14 +94,25 @@ class OpenAiCompatibleLlm implements LlmEngine {
         .transform(utf8.decoder)
         .transform(const LineSplitter());
 
+    // Ignoring `reasoning_content` only helps when the server separates it.
+    // Plenty do not — llama.cpp with `--reasoning-format none`, and many GGUF
+    // chat templates, put `<think>…</think>` straight into `content`, which a
+    // voice assistant would otherwise read aloud.
+    final filter = ThinkingFilter(assumeLeadingThinking: assumeLeadingThinking);
+
     await for (final line in lines) {
       if (!line.startsWith('data:')) continue;
       final payload = line.substring(5).trim();
       if (payload == '[DONE]') break;
 
       final delta = _contentDelta(payload);
-      if (delta != null && delta.isNotEmpty) yield delta;
+      if (delta == null || delta.isEmpty) continue;
+      final visible = filter.add(delta);
+      if (visible.isNotEmpty) yield visible;
     }
+
+    final tail = filter.flush();
+    if (tail.isNotEmpty) yield tail;
   }
 
   /// Pulls the spoken text out of one SSE frame.

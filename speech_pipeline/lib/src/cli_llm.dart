@@ -1,6 +1,7 @@
 import 'package:agent_cli/agent_cli.dart';
 
 import 'engines.dart';
+import 'thinking_filter.dart';
 
 /// Answers through an AI coding CLI the user already has installed.
 ///
@@ -31,11 +32,12 @@ class CliLlmEngine implements LlmEngine {
         .map((m) => m.content)
         .join('\n\n');
 
-    return _session.ask(
+    // A CLI hands back whatever the model wrote, reasoning tags included.
+    return withoutThinking(_session.ask(
       _renderTranscript(history),
       systemPrompt: system.isEmpty ? null : system,
       model: model,
-    );
+    ));
   }
 
   /// Renders the conversation into one prompt.
