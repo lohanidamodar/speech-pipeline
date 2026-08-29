@@ -194,7 +194,14 @@ class UiHostException implements Exception {
 // ─── everything below runs on the UI thread ────────────────────────────────
 
 const _hotkeyId = 1;
-const _releaseTimerId = 1;
+
+/// The id Windows actually gave the release timer.
+///
+/// `SetTimer` with a null window ignores the id it is handed and generates its
+/// own, returning it. Comparing the arriving `WM_TIMER` against the id we
+/// asked for therefore never matches, the release is never noticed, and the
+/// app sits recording forever while ignoring every later press.
+int _releaseTimer = 0;
 
 late SendPort _toMain;
 late String _hotkeyLabel;
@@ -303,12 +310,13 @@ void _handleThreadMessage(int message, int wParam) {
       _toMain.send(const ['pressed']);
       // Windows reports the press but never the release, so the key is polled
       // from a timer — which wakes GetMessage, keeping the loop blocking.
-      SetTimer(null, _releaseTimerId, 15, nullptr);
+      _releaseTimer = SetTimer(null, 0, 15, nullptr).value;
 
     case WM_TIMER:
-      if (wParam != _releaseTimerId || !_hotkeyDown) return;
+      if (wParam != _releaseTimer || !_hotkeyDown) return;
       if (GetAsyncKeyState(_currentHotkeyKey) & 0x8000 != 0) return;
-      KillTimer(null, _releaseTimerId);
+      KillTimer(null, _releaseTimer);
+      _releaseTimer = 0;
       _hotkeyDown = false;
       _toMain.send(const ['released']);
   }
