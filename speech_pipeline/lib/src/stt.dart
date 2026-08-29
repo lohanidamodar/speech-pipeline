@@ -1,8 +1,9 @@
-import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
+
+import 'sherpa_init.dart';
 
 /// Speech recognition for the reference clip.
 ///
@@ -18,14 +19,9 @@ class Stt {
     required String language,
     String? nativeLibraryPath,
   }) {
-    // Windows ships an onnxruntime.dll in System32 (ORT 1.17), which wins the
-    // default search order over the one sherpa needs (1.27) and crashes on an
-    // API-version mismatch. Loading ours by absolute path first pins it.
-    if (nativeLibraryPath != null && Platform.isWindows) {
-      final ort = '$nativeLibraryPath\\onnxruntime.dll';
-      if (File(ort).existsSync()) DynamicLibrary.open(ort);
-    }
-    sherpa.initBindings(nativeLibraryPath);
+    // Pins our onnxruntime.dll ahead of the System32 one; see
+    // initSherpaBindings for why that matters on Windows.
+    initSherpaBindings(nativeLibraryPath);
 
     final sherpa.OfflineModelConfig model;
     if (language == 'en') {

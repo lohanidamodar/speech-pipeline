@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'engines.dart';
+import 'sherpa_init.dart';
 
 enum TtsModelKind { kokoro, vits, matcha }
 
@@ -173,7 +174,7 @@ class SherpaTtsEngine implements TtsEngine {
     final (toMain, config, cancelAddress) = args;
     final cancelFlag = Pointer<Int32>.fromAddress(cancelAddress);
 
-    sherpa.initBindings(config.nativeLibraryPath);
+    initSherpaBindings(config.nativeLibraryPath);
     final tts = sherpa.OfflineTts(_buildConfig(config));
 
     final inbox = ReceivePort();
