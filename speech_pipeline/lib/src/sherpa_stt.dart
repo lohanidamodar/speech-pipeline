@@ -4,10 +4,11 @@ import 'dart:isolate';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'engines.dart';
+import 'sherpa_init.dart';
 
 /// Which sherpa-onnx recogniser family to build. All are non-streaming: the
 /// VAD has already cut the audio into utterances by the time we decode.
-enum SttModelKind { senseVoice, whisper, nemoCtc }
+enum SttModelKind { senseVoice, whisper, nemoCtc, transducer }
 
 /// Sendable recogniser description. Native handles can't cross isolates, so the
 /// worker is given paths and builds its own recogniser on the other side.
@@ -20,7 +21,8 @@ class SttConfig {
     this.nativeLibraryPath,
   }) : kind = SttModelKind.senseVoice,
        encoder = '',
-       decoder = '';
+       decoder = '',
+       joiner = '';
 
   const SttConfig.whisper({
     required this.encoder,
@@ -30,7 +32,8 @@ class SttConfig {
     this.numThreads = 2,
     this.nativeLibraryPath,
   }) : kind = SttModelKind.whisper,
-       model = '';
+       model = '',
+       joiner = '';
 
   /// NeMo Conformer-CTC — the family AI4Bharat's IndicConformer belongs to,
   /// which is how Nepali and Sanskrit get a dedicated recogniser rather than a
@@ -44,12 +47,35 @@ class SttConfig {
   }) : kind = SttModelKind.nemoCtc,
        encoder = '',
        decoder = '',
+       joiner = '',
+       language = '';
+
+  /// NeMo transducer — the family Parakeet TDT belongs to.
+  ///
+  /// Worth the extra weight for English: it punctuates and capitalises as it
+  /// decodes, so the text arrives closer to readable than a CTC model's
+  /// unbroken stream, and there is that much less for a cleanup pass to guess
+  /// at afterwards. Three files rather than one, because a transducer decodes
+  /// with an encoder, a prediction network and a joiner.
+  const SttConfig.transducer({
+    required this.encoder,
+    required this.decoder,
+    required this.joiner,
+    required this.tokens,
+    this.numThreads = 2,
+    this.nativeLibraryPath,
+  }) : kind = SttModelKind.transducer,
+       model = '',
        language = '';
 
   final SttModelKind kind;
   final String model;
   final String encoder;
   final String decoder;
+
+  /// Transducer only.
+  final String joiner;
+
   final String tokens;
   final String language;
   final int numThreads;
@@ -127,7 +153,7 @@ class SherpaSttEngine implements SttEngine {
   static void _workerMain((SendPort, SttConfig) args) {
     final (toMain, config) = args;
 
-    sherpa.initBindings(config.nativeLibraryPath);
+    initSherpaBindings(config.nativeLibraryPath);
     final recognizer = sherpa.OfflineRecognizer(_buildConfig(config));
 
     final inbox = ReceivePort();
@@ -170,6 +196,19 @@ class SherpaSttEngine implements SttEngine {
       ),
       SttModelKind.nemoCtc => sherpa.OfflineModelConfig(
         nemoCtc: sherpa.OfflineNemoEncDecCtcModelConfig(model: c.model),
+        tokens: c.tokens,
+        numThreads: c.numThreads,
+        debug: false,
+      ),
+      SttModelKind.transducer => sherpa.OfflineModelConfig(
+        transducer: sherpa.OfflineTransducerModelConfig(
+          encoder: c.encoder,
+          decoder: c.decoder,
+          joiner: c.joiner,
+        ),
+        // NeMo transducers are exported with this name; sherpa uses it to pick
+        // the right feature front-end, and gets it wrong when it is absent.
+        modelType: 'nemo_transducer',
         tokens: c.tokens,
         numThreads: c.numThreads,
         debug: false,

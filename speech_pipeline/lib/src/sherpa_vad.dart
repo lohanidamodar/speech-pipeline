@@ -93,7 +93,12 @@ class SherpaVadEngine implements VadEngine {
 
   Stream<VadEvent> _drain() async* {
     while (!_vad.isEmpty()) {
-      yield SpeechEnded(_withPreRoll(_vad.front()));
+      final segment = _vad.front();
+      final withPreRoll = _withPreRoll(segment);
+      // The pre-roll is audio from before the detector fired, so the utterance
+      // truly starts that much earlier than sherpa reports.
+      final start = segment.start - (withPreRoll.length - segment.samples.length);
+      yield SpeechEnded(withPreRoll, startSample: start < 0 ? 0 : start);
       _vad.pop();
     }
   }

@@ -88,6 +88,19 @@ final class SpeechStarted extends VadEvent {
 }
 
 final class SpeechEnded extends VadEvent {
-  const SpeechEnded(this.samples);
+  const SpeechEnded(this.samples, {this.startSample = 0});
+
   final AudioChunk samples;
+
+  /// Where this utterance begins, counted in samples from the first sample the
+  /// detector ever saw.
+  ///
+  /// A live conversation has no use for this, but anything transcribing a
+  /// recording does: silence between utterances is dropped, so their positions
+  /// cannot be recovered by adding up segment lengths afterwards.
+  final int startSample;
+
+  /// Offset of this utterance from the start of the stream.
+  Duration startAt({int sampleRate = kSampleRate}) =>
+      Duration(microseconds: startSample * 1000000 ~/ sampleRate);
 }

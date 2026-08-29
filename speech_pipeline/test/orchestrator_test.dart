@@ -218,6 +218,7 @@ void main() {
       expect(tts.spoken, ['Kathmandu.']);
     },
   );
+  _speechEndedTimestamps();
 }
 
 /// Yields to the event loop until [condition] holds, so tests don't depend on
@@ -233,4 +234,23 @@ Future<void> pumpUntil(
     }
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
+}
+
+void _speechEndedTimestamps() {
+  group('SpeechEnded.startAt', () {
+    test('converts a sample offset into a position in the recording', () {
+      // 16000 samples at 16 kHz is one second in.
+      final event = SpeechEnded(Float32List(160), startSample: 16000);
+      expect(event.startAt(), const Duration(seconds: 1));
+    });
+
+    test('defaults to the start, for callers that do not track position', () {
+      expect(SpeechEnded(Float32List(160)).startAt(), Duration.zero);
+    });
+
+    test('honours a different rate', () {
+      final event = SpeechEnded(Float32List(160), startSample: 24000);
+      expect(event.startAt(sampleRate: 24000), const Duration(seconds: 1));
+    });
+  });
 }

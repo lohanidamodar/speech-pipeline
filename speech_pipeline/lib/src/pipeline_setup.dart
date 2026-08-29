@@ -126,6 +126,26 @@ class PipelineSetup {
   LanguageSupport get support => languageSupport[language]!;
 
   String get _vadModel => '$modelsDir/silero_vad.onnx';
+  /// Parakeet TDT, when it has been fetched.
+  ///
+  /// Used in preference to SenseVoice for English, but the choice is closer
+  /// than its reputation suggests. Measured on the same clip: Parakeet heard
+  /// "thirty hands went up" where SenseVoice heard "30 he went up", and broke
+  /// sentences better; SenseVoice heard "every single hand" where Parakeet
+  /// heard "head". The clear difference is that SenseVoice normalises numbers
+  /// to digits and Parakeet does not, so "thirty minutes" stays spelled out
+  /// unless a cleanup pass converts it.
+  ///
+  /// Six times the size, and only used when present — downloading it is the
+  /// opt-in.
+  String get _parakeetDir =>
+      Platform.environment['SP_PARAKEET_DIR'] ??
+      '$modelsDir/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8';
+
+  bool get hasParakeet =>
+      File('$_parakeetDir/encoder.int8.onnx').existsSync() &&
+      File('$_parakeetDir/joiner.int8.onnx').existsSync();
+
   String get _senseVoiceDir =>
       '$modelsDir/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17';
   String get _indicConformerDir => '$modelsDir/indicconformer-${language.code}';
@@ -158,6 +178,8 @@ class PipelineSetup {
 
   /// What will actually recognise speech, given what is on disk.
   String get activeSttModel => switch (language) {
+    PipelineLanguage.english when hasParakeet =>
+      'Parakeet TDT 0.6b v3 (int8)',
     PipelineLanguage.english => support.stt.model,
     _ when hasDedicatedStt => support.stt.model,
     _ => 'Whisper $_whisperName (fallback, --language ${language.code})',
@@ -251,6 +273,13 @@ class PipelineSetup {
   }
 
   SttConfig _sttConfig() => switch (language) {
+    PipelineLanguage.english when hasParakeet => SttConfig.transducer(
+      encoder: '$_parakeetDir/encoder.int8.onnx',
+      decoder: '$_parakeetDir/decoder.int8.onnx',
+      joiner: '$_parakeetDir/joiner.int8.onnx',
+      tokens: '$_parakeetDir/tokens.txt',
+      nativeLibraryPath: nativeLibraryPath,
+    ),
     PipelineLanguage.english => SttConfig.senseVoice(
       model: '$_senseVoiceDir/model.int8.onnx',
       tokens: '$_senseVoiceDir/tokens.txt',
