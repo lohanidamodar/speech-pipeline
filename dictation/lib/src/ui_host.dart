@@ -403,6 +403,86 @@ int _messageWindowProc(int hwnd, int message, int wParam, int lParam) {
   );
 }
 
+// ─── icon ──────────────────────────────────────────────────────────────────
+
+int _idleIcon = 0;
+int _activeIcon = 0;
+
+/// Draws a microphone into a 32x32 icon, in code.
+///
+/// No .ico file: the app compiles to a single exe, and an icon that lives
+/// beside it is one more thing to lose. Two are made — a quiet one and a red
+/// one for while the microphone is open — because the tray is where someone
+/// glances to check whether it is listening.
+int _makeIcon({required bool active}) {
+  const size = 32;
+  final pixels = calloc<Uint32>(size * size);
+
+  // Premultiplied BGRA, which is what a 32-bit DIB section wants.
+  int argb(int a, int r, int g, int b) =>
+      (a << 24) | ((r * a ~/ 255) << 16) | ((g * a ~/ 255) << 8) | (b * a ~/ 255);
+
+  final bodyColour = active ? [235, 70, 80] : [225, 228, 235];
+  final body = argb(255, bodyColour[0], bodyColour[1], bodyColour[2]);
+
+  for (var y = 0; y < size; y++) {
+    for (var x = 0; x < size; x++) {
+      var value = 0; // transparent
+
+      // Capsule: the microphone itself.
+      const cx = 16.0, top = 6.0, bottom = 19.0, radius = 5.0;
+      final withinX = (x + 0.5 - cx).abs() <= radius;
+      final inStraight = withinX && y + 0.5 >= top && y + 0.5 <= bottom;
+      final dTop = math.sqrt(math.pow(x + 0.5 - cx, 2) + math.pow(y + 0.5 - top, 2));
+      final dBottom =
+          math.sqrt(math.pow(x + 0.5 - cx, 2) + math.pow(y + 0.5 - bottom, 2));
+      if (inStraight || dTop <= radius || dBottom <= radius) value = body;
+
+      // The cradle: an arc under the capsule.
+      final dCentre = math.sqrt(math.pow(x + 0.5 - cx, 2) + math.pow(y + 0.5 - 18, 2));
+      if (y + 0.5 > 18 && dCentre >= 8.5 && dCentre <= 10.0) value = body;
+
+      // Stem and base.
+      if (withinX && (x + 0.5 - cx).abs() <= 1.2 && y >= 27 && y <= 29) value = body;
+      if (y >= 29 && y <= 30 && (x + 0.5 - cx).abs() <= 5) value = body;
+
+      pixels[y * size + x] = value;
+    }
+  }
+
+  final colour = CreateBitmap(size, size, 1, 32, pixels.cast());
+  // A 32-bit colour bitmap carries its own alpha, so the mask is unused —
+  // but ICONINFO still requires one.
+  final maskBits = calloc<Uint8>(size * size ~/ 8);
+  final mask = CreateBitmap(size, size, 1, 1, maskBits.cast());
+
+  final info = calloc<ICONINFO>()
+    ..ref.fIcon = true
+    ..ref.hbmMask = mask
+    ..ref.hbmColor = colour;
+  final icon = CreateIconIndirect(info);
+
+  DeleteObject(HGDIOBJ(colour));
+  DeleteObject(HGDIOBJ(mask));
+  calloc
+    ..free(pixels)
+    ..free(maskBits)
+    ..free(info);
+  return icon.value.address;
+}
+
+/// The icon for the current state, made once and reused.
+int _iconFor(UiStatus status) {
+  final active =
+      status == UiStatus.listening || status == UiStatus.recognising;
+  if (active) {
+    if (_activeIcon == 0) _activeIcon = _makeIcon(active: true);
+    return _activeIcon;
+  }
+  if (_idleIcon == 0) _idleIcon = _makeIcon(active: false);
+  return _idleIcon;
+}
+
 // ─── tray ──────────────────────────────────────────────────────────────────
 
 void _addTrayIcon() {
@@ -412,7 +492,7 @@ void _addTrayIcon() {
     ..ref.uID = 1
     ..ref.uFlags = NOTIFY_ICON_DATA_FLAGS(NIF_ICON | NIF_MESSAGE | NIF_TIP)
     ..ref.uCallbackMessage = _trayCallback
-    ..ref.hIcon = LoadIcon(null, IDI_APPLICATION).value
+    ..ref.hIcon = HICON(Pointer.fromAddress(_iconFor(UiStatus.loading)))
     ..ref.szTip = 'Dictation — starting…';
   _trayData = data;
   Shell_NotifyIcon(NOTIFY_ICON_MESSAGE(NIM_ADD), data);
@@ -438,8 +518,11 @@ String get _statusText => switch (_status) {
 void _applyStatus() {
   final data = _trayData;
   if (data == null) return;
+  // Icon as well as tooltip: the colour is what someone actually reads when
+  // they glance at the tray to see whether it is listening.
   data.ref
-    ..uFlags = NOTIFY_ICON_DATA_FLAGS(NIF_TIP)
+    ..uFlags = NOTIFY_ICON_DATA_FLAGS(NIF_TIP | NIF_ICON)
+    ..hIcon = HICON(Pointer.fromAddress(_iconFor(_status)))
     ..szTip = 'Dictation — $_statusText';
   Shell_NotifyIcon(NOTIFY_ICON_MESSAGE(NIM_MODIFY), data);
 }
@@ -493,6 +576,36 @@ void _showMenu(int hwnd) {
 
 // ─── overlay ───────────────────────────────────────────────────────────────
 
+/// Not surfaced by the win32 package, so bound by hand.
+final _createRoundRectRgn = DynamicLibrary.open('gdi32.dll').lookupFunction<
+    IntPtr Function(Int32, Int32, Int32, Int32, Int32, Int32),
+    int Function(int, int, int, int, int, int)>('CreateRoundRectRgn');
+
+int _overlayFont = 0;
+
+/// Segoe UI at a readable size.
+///
+/// The stock device font is a bitmap face from the 1990s and looks it. One
+/// `CreateFont` is the difference between a status pill that looks deliberate
+/// and one that looks unfinished.
+int _font() {
+  if (_overlayFont != 0) return _overlayFont;
+  final face = 'Segoe UI'.toNativeUtf16();
+  final font = CreateFont(
+    -17, 0, 0, 0,
+    FW_SEMIBOLD, 0, 0, 0,
+    FONT_CHARSET(DEFAULT_CHARSET),
+    FONT_OUTPUT_PRECISION(OUT_DEFAULT_PRECIS),
+    FONT_CLIP_PRECISION(CLIP_DEFAULT_PRECIS),
+    FONT_QUALITY(CLEARTYPE_QUALITY),
+    0, // DEFAULT_PITCH | FF_DONTCARE
+    PCWSTR(face),
+  );
+  calloc.free(face);
+  _overlayFont = font.address;
+  return _overlayFont;
+}
+
 void _prepareOverlay() {
   final window = HWND(Pointer.fromAddress(_overlayWindow));
   final index = WINDOW_LONG_PTR_INDEX(GWL_EXSTYLE);
@@ -527,6 +640,11 @@ void _prepareOverlay() {
     SET_WINDOW_POS_FLAGS(SWP_NOACTIVATE),
   );
   calloc.free(work);
+
+  // Rounded corners. A rectangle with sharp corners floating over someone
+  // else's window reads as a glitch rather than a control.
+  final region = _createRoundRectRgn(0, 0, 281, 57, 18, 18);
+  SetWindowRgn(window, HRGN(Pointer.fromAddress(region)), true);
 }
 
 void _applyOverlay() {
@@ -588,17 +706,30 @@ void _paintOverlay(int hwnd) {
     FillRect(dc, rect, background);
     DeleteObject(HGDIOBJ(background));
 
-    if (listening && _level > 0) {
-      final meter = calloc<RECT>()
-        ..ref.left = rect.ref.left
-        ..ref.top = rect.ref.bottom - 4
-        ..ref.right = rect.ref.left +
-            (math.sqrt(_level) * (rect.ref.right - rect.ref.left)).round()
-        ..ref.bottom = rect.ref.bottom;
-      final brush = CreateSolidBrush(COLORREF(accent));
-      FillRect(dc, meter, brush);
-      DeleteObject(HGDIOBJ(brush));
-      calloc.free(meter);
+    if (listening) {
+      // Inset, so it reads as part of the pill rather than an edge artefact.
+      // The square root opens the bottom of the range out: speech spends most
+      // of its time quiet, and a linear meter barely moves.
+      const inset = 18;
+      final track = rect.ref.right - rect.ref.left - inset * 2;
+      final filled = (math.sqrt(_level.clamp(0, 1)) * track).round();
+
+      final trough = calloc<RECT>()
+        ..ref.left = inset
+        ..ref.top = rect.ref.bottom - 11
+        ..ref.right = rect.ref.right - inset
+        ..ref.bottom = rect.ref.bottom - 8;
+      final troughBrush = CreateSolidBrush(COLORREF(_rgb(52, 56, 66)));
+      FillRect(dc, trough, troughBrush);
+      DeleteObject(HGDIOBJ(troughBrush));
+
+      if (filled > 0) {
+        trough.ref.right = inset + filled;
+        final brush = CreateSolidBrush(COLORREF(accent));
+        FillRect(dc, trough, brush);
+        DeleteObject(HGDIOBJ(brush));
+      }
+      calloc.free(trough);
     }
 
     final dot = calloc<RECT>()
@@ -613,6 +744,8 @@ void _paintOverlay(int hwnd) {
 
     SetBkMode(dc, BACKGROUND_MODE(TRANSPARENT));
     SetTextColor(dc, COLORREF(_rgb(238, 240, 245)));
+    final previousFont =
+        SelectObject(dc, HGDIOBJ(Pointer.fromAddress(_font())));
 
     final text = _overlayCaption.toNativeUtf16();
     final textRect = calloc<RECT>()
@@ -629,6 +762,7 @@ void _paintOverlay(int hwnd) {
     );
     calloc.free(textRect);
     calloc.free(text);
+    SelectObject(dc, previousFont);
 
     EndPaint(window, ps);
   } finally {

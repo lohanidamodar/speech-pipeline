@@ -245,11 +245,15 @@ class DictationApp {
         );
 
       case UiMenu.settings:
-        await Process.start(
-          'cmd',
-          ['/c', 'start', '', configPath],
-          mode: ProcessStartMode.detached,
-        );
+        // Raise the editor if it is already open on this file, rather than
+        // opening another window on top of the last one.
+        if (!focusWindowShowing(configPath)) {
+          await Process.start(
+            'cmd',
+            ['/c', 'start', '', configPath],
+            mode: ProcessStartMode.detached,
+          );
+        }
 
       case UiMenu.reload:
         await _reload();

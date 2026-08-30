@@ -79,3 +79,39 @@ String focusedWindowTitle() {
     free(buffer);
   }
 }
+
+/// Brings an already-open window to the front, if one is showing [file].
+///
+/// So "Edit settings" does not pile up a new editor window every time it is
+/// clicked. Matched on the title, because launching through the shell hands
+/// the file to whichever editor is associated with it and returns before that
+/// editor has a window — there is no process id to hold on to.
+///
+/// Returns false when no such window is open, which is the caller's cue to
+/// launch one.
+bool focusWindowShowing(String file) {
+  final name = file.split(RegExp(r'[\\/]')).last;
+  if (name.isEmpty) return false;
+
+  final buffer = wsalloc(256);
+  try {
+    var window = GetTopWindow(null).value;
+    while (window != nullptr) {
+      if (IsWindowVisible(window)) {
+        final length = GetWindowText(window, buffer, 256).value;
+        // "config.json - Notepad", and every editor's variation on it.
+        if (length > 0 && buffer.toDartString().startsWith(name)) {
+          // A process may not raise another's window unless it is allowed to;
+          // showing it first covers the case where it is minimised.
+          ShowWindow(window, SW_RESTORE);
+          SetForegroundWindow(window);
+          return true;
+        }
+      }
+      window = GetWindow(window, GW_HWNDNEXT).value;
+    }
+    return false;
+  } finally {
+    free(buffer);
+  }
+}
