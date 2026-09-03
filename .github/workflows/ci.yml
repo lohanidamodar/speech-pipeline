@@ -1,0 +1,15 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    uses: popupbits/.github/.github/workflows/dart-ci.yml@main
+    with:
+      # sherpa_onnx is a Flutter plugin, so `dart pub get` cannot resolve the
+      # workspace even though nothing here is a Flutter app.
+      sdk: flutter
+      working-directory: speech_pipeline
