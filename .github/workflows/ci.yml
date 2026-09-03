@@ -1,3 +1,9 @@
+# Analyse and test on every push.
+#
+# Inlined rather than calling popupbits/.github: a reusable workflow in a
+# private repository is only callable from the same owner, and this repo lives
+# under lohanidamodar/ while that one is a popupbits/ org repo.
+
 name: CI
 
 on:
@@ -7,9 +13,20 @@ on:
 
 jobs:
   test:
-    uses: popupbits/.github/.github/workflows/dart-ci.yml@main
-    with:
-      # sherpa_onnx is a Flutter plugin, so `dart pub get` cannot resolve the
-      # workspace even though nothing here is a Flutter app.
-      sdk: flutter
-      working-directory: speech_pipeline
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: speech_pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # `flutter pub`, not `dart pub`: sherpa_onnx is published as a Flutter
+      # plugin, so the workspace will not resolve without the Flutter SDK even
+      # though nothing here is a Flutter app.
+      - run: flutter pub get
+      - run: dart analyze --fatal-infos
+      - run: dart test
