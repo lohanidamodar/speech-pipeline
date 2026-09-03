@@ -635,3 +635,12 @@ boundary and tighten up for the rest of the reply.
   **first audio 20675ms**, 58.4s for 6.5s of speech — RTF 9.03. The same engine
   over Vulkan synthesises the same Nepali sentence at RTF 0.129. Treat the CPU
   path as a correctness fallback, not a usable one.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
+
+The models are not MIT, and one recogniser is not open source at all. Nothing
+here bundles weights: they are downloaded from their publishers with the licence
+shown first. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) before you
+build anything on top of this.

@@ -10,3 +10,6 @@ native/
 *.raw
 samples/
 voice_clone_poc/.dart_tool/
+
+# Generated, and it embeds absolute paths from whoever ran `pub get` last.
+.flutter-plugins-dependencies
