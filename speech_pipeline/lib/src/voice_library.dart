@@ -51,8 +51,13 @@ class VoiceLibrary {
     for (final entry in raw) {
       if (entry is! Map<String, dynamic>) continue;
       final profile = VoiceProfile.fromJson(entry);
-      if (profile.referenceWavPath case final path?
-          when File(path).existsSync()) {
+      // A described voice has no recording to check — the description is the
+      // whole of it. Only a clone whose audio has gone is dropped.
+      final keep = switch (profile.referenceWavPath) {
+        final path? => File(path).existsSync(),
+        null => profile.isDesigned,
+      };
+      if (keep) {
         _saved.add(profile);
       } else {
         dropped = true;
@@ -81,6 +86,34 @@ class VoiceLibrary {
       name: name.trim().isEmpty ? id : name.trim(),
       referenceWavPath: path,
       transcript: transcript,
+      language: language,
+    );
+    _saved.add(profile);
+    await _write();
+    return profile;
+  }
+
+  /// Stores a voice that exists only as a description.
+  ///
+  /// No recording, so nothing is written beside the index: the description is
+  /// the whole of the voice. Only models whose `canDesignVoice` is true can
+  /// act on it — the rest will speak in their default voice.
+  Future<VoiceProfile> describe({
+    required String description,
+    String? name,
+    String? language,
+  }) async {
+    final wanted = description.trim();
+    if (wanted.isEmpty) {
+      throw ArgumentError('A described voice needs a description.');
+    }
+    await directory.create(recursive: true);
+
+    final label = (name ?? '').trim().isEmpty ? wanted : name!.trim();
+    final profile = VoiceProfile(
+      id: _newId(label),
+      name: label,
+      instruct: wanted,
       language: language,
     );
     _saved.add(profile);

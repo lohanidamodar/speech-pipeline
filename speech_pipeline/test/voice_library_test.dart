@@ -122,4 +122,43 @@ void main() {
     await empty.load();
     expect(empty.profiles, [VoiceProfile.builtIn]);
   });
+  group('a voice made of words', () {
+    test('is saved and survives a reload', () async {
+      // The bug this guards: load() used to keep only profiles whose
+      // reference recording existed, so a described voice — which has none —
+      // vanished the next time the app started.
+      final library = VoiceLibrary(Directory('${dir.path}/voices'));
+      await library.load();
+      final made = await library.describe(
+        description: 'an older man, unhurried, warm and gravelly',
+      );
+
+      expect(made.isDesigned, isTrue);
+      expect(made.isCloned, isFalse);
+
+      final reopened = VoiceLibrary(Directory('${dir.path}/voices'));
+      await reopened.load();
+      expect(reopened.profiles.map((p) => p.id), contains(made.id));
+      expect(reopened.byId(made.id)!.instruct, made.instruct);
+    });
+
+    test('needs an actual description', () async {
+      final library = VoiceLibrary(Directory('${dir.path}/voices'));
+      await library.load();
+      await expectLater(
+        library.describe(description: '   '),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('is removed without looking for a recording', () async {
+      final library = VoiceLibrary(Directory('${dir.path}/voices'));
+      await library.load();
+      final made = await library.describe(description: 'a cheerful narrator');
+
+      expect(await library.remove(made.id), isTrue);
+      expect(library.profiles.map((p) => p.id), isNot(contains(made.id)));
+    });
+  });
+
 }
