@@ -12,12 +12,26 @@ import 'package:speech_pipeline/speech_pipeline.dart';
 /// argument for FFI: the CLI reloads 1.35 GB per utterance, this does not.
 Future<void> main(List<String> argv) async {
   final parser = ArgParser()
-    ..addOption('model', mandatory: true)
+    ..addOption(
+      'engine',
+      help: 'Voice from the shared catalogue — "omnivoice-q8", "voxcpm2-q8". '
+          'Downloads on first use, licence shown first, and brings its own '
+          'family name and style convention.',
+    )
+    ..addOption('model', help: 'GGUF path, bypassing the catalogue.')
     ..addOption('family', defaultsTo: 'omnivoice')
     ..addOption('lib', help: 'Directory holding libaudiocpp_c.*')
     ..addOption('text', mandatory: true)
     ..addOption('lang')
-    ..addOption('instruct', help: 'Voice design prompt.')
+    ..addOption(
+      'style',
+      help: 'Describe the voice — "an older man, unhurried". Delivered the '
+          'way the chosen model wants it.',
+    )
+    ..addOption(
+      'instruct',
+      help: 'Raw instruction field, for testing a family directly.',
+    )
     ..addOption('ref-wav', help: 'Reference audio to clone.')
     ..addOption('ref-text', help: 'Transcript of --ref-wav.')
     ..addOption(
@@ -37,12 +51,59 @@ Future<void> main(List<String> argv) async {
   final args = parser.parse(argv);
   final backend = AcBackend.values.byName(args.option('backend')!);
 
+  // A catalogue entry knows its own family and how it wants a voice described;
+  // an explicit --model leaves both to the caller.
+  var modelPath = args.option('model');
+  var family = args.option('family')!;
+  var stylePolicy = VoiceStylePolicy.instruction;
+  final catalogue = VoiceCatalogue();
+
+  if (args.option('engine') case final id?) {
+    final model = modelById(id);
+    if (model == null) {
+      stderr.writeln('No voice called "$id".');
+      catalogue.dispose();
+      exitCode = 1;
+      return;
+    }
+    final setup = await catalogue.prepare(
+      model,
+      onLicence: (m) {
+        stderr.writeln('${m.name} — ${m.sizeLabel} — ${m.licence.summary}');
+        stderr.writeln(m.licence.url);
+        stderr.write('Download it? [y/N] ');
+        final a = stdin.readLineSync()?.trim().toLowerCase();
+        return a == 'y' || a == 'yes';
+      },
+      onProgress: (p) => stderr.write('\r  ${(p.fraction * 100).round()}%   '),
+    );
+    modelPath = setup.modelPath;
+    family = setup.family;
+    stylePolicy = setup.stylePolicy;
+  }
+
+  if (modelPath == null) {
+    stderr.writeln('Give --engine <id> or --model <gguf>.');
+    catalogue.dispose();
+    exitCode = 1;
+    return;
+  }
+
+  // The description goes into the text for one family and into the instruction
+  // field for another; a model handed it the wrong way says the line in its
+  // default voice and reports success.
+  final say = applyVoiceStyle(
+    args.option('text')!,
+    args.option('style'),
+    stylePolicy,
+  );
+
   final loadStart = DateTime.now();
   final AudioCpp engine;
   try {
     engine = AudioCpp.open(
-      modelPath: args.option('model')!,
-      family: args.option('family')!,
+      modelPath: modelPath,
+      family: family,
       libraryPath: args.option('lib'),
       backend: backend,
       device: int.parse(args.option('device')!),
@@ -65,9 +126,9 @@ Future<void> main(List<String> argv) async {
     final AcAudio audio;
     try {
       audio = engine.synthesize(
-        args.option('text')!,
+        say.text,
         language: args.option('lang'),
-        instruct: args.option('instruct'),
+        instruct: args.option('instruct') ?? say.instruct,
         refWavPath: args.option('ref-wav'),
         refText: args.option('ref-text'),
       );

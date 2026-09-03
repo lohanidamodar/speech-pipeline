@@ -18,6 +18,11 @@ dependencies:
   # package and the sherpa-onnx library on disk must be the same release.
   # A newer package against older binaries fails at lookup, not at compile.
   sherpa_onnx: 1.13.4
+  # The shared model store: one copy of the weights per machine, and the
+  # licence shown before anything downloads.
+  voice_models:
+    git:
+      url: https://github.com/lohanidamodar/voice-models.git
 
 dev_dependencies:
   lints: ^5.0.0

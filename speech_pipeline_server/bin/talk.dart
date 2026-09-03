@@ -39,8 +39,23 @@ Future<void> main(List<String> argv) async {
     ..addOption('models', help: 'Model directory.', defaultsTo: 'models')
     ..addOption('native-lib', help: 'Directory holding libsherpa-onnx-c-api.*')
     ..addOption(
+      'voice-engine',
+      help: 'Voice from the shared catalogue, downloaded on first use — '
+          '"omnivoice-q8", "voxcpm2-q8". See --list-engines.',
+    )
+    ..addFlag(
+      'list-engines',
+      negatable: false,
+      help: 'Print the available voices, their licences and sizes.',
+    )
+    ..addOption(
       'voice-model',
-      help: 'GGUF for the cloning engine. Enables the cloned voice.',
+      help: 'GGUF for the cloning engine, bypassing the catalogue.',
+    )
+    ..addOption(
+      'voice-style',
+      help: 'Describe how the voice should sound — "an older man, unhurried". '
+          'Only models that support voice design act on it.',
     )
     ..addOption(
       'voice-lib',
@@ -82,17 +97,59 @@ Future<void> main(List<String> argv) async {
     return;
   }
 
+  final catalogue = VoiceCatalogue();
+  if (args.flag('list-engines')) {
+    _printVoices(catalogue);
+    catalogue.dispose();
+    return;
+  }
+
   final language = PipelineLanguage.byCode(args.option('lang')!);
 
   // Starting the clone engine costs weight loading plus, on a GPU backend, a
   // one-off shader compilation — so it happens before anything else and its
   // cost is reported rather than hidden inside the first reply.
+  // A voice named from the catalogue is fetched (with its licence shown) and
+  // brings its own family name; an explicit --voice-model still wins, for a
+  // build that is not in the catalogue yet.
+  var modelPath = args.option('voice-model');
+  var family = args.option('voice-family')!;
+  VoiceSetup? voiceSetup;
+
+  if (args.option('voice-engine') case final id? when modelPath == null) {
+    final model = modelById(id);
+    if (model == null) {
+      stderr.writeln('No voice called "$id". Try --list-engines.');
+      catalogue.dispose();
+      exitCode = 1;
+      return;
+    }
+    try {
+      voiceSetup = await catalogue.prepare(
+        model,
+        onLicence: _confirmLicence,
+        onProgress: _showProgress,
+      );
+    } on ModelDeclined catch (e) {
+      stderr.writeln('$e');
+      catalogue.dispose();
+      exitCode = 1;
+      return;
+    }
+    modelPath = voiceSetup.modelPath;
+    family = voiceSetup.family;
+
+    if (catalogue.languageWarning(model, args.option('lang')) case final w?) {
+      stderr.writeln('\n$w\n');
+    }
+  }
+
   CloneService? clone;
-  if (args.option('voice-model') case final model?) {
+  if (modelPath case final model?) {
     stderr.writeln('Starting the voice engine…');
     clone = await CloneService.start(
       modelPath: model,
-      family: args.option('voice-family')!,
+      family: family,
       libraryPath: args.option('voice-lib'),
       backend: AcBackend.values.byName(args.option('voice-backend')!),
       sttModelsDir: args.option('models'),
@@ -123,6 +180,7 @@ Future<void> main(List<String> argv) async {
   // An explicit --voice-ref wins; otherwise a named voice from the library;
   // otherwise the model's own speaker, which always works.
   final ref = args.option('voice-ref');
+  final style = args.option('voice-style');
   VoiceProfile? profile;
   if (ref != null) {
     profile = VoiceProfile(
@@ -130,7 +188,12 @@ Future<void> main(List<String> argv) async {
       name: ref.split(Platform.pathSeparator).last,
       referenceWavPath: ref,
       transcript: args.option('voice-ref-text'),
+      instruct: style,
     );
+  } else if (style != null && args.option('voice') == null) {
+    // A voice that exists only as a description. No recording to clone from,
+    // so the model is being asked to invent one.
+    profile = VoiceProfile(id: 'designed', name: style, instruct: style);
   } else if (args.option('voice') case final wanted?) {
     profile =
         library.byId(wanted) ??
@@ -146,6 +209,18 @@ Future<void> main(List<String> argv) async {
       exitCode = 1;
       return;
     }
+    if (style != null) profile = profile.copyWith(instruct: style);
+  }
+
+  // Said rather than ignored: the string is accepted by every family and acted
+  // on by only some, so silence here would look like the model obeying.
+  if (style != null && voiceSetup != null && !voiceSetup.canDesignVoice) {
+    stderr.writeln('note: ${voiceSetup.model.name} cannot be told how to '
+        'sound; --voice-style will have no effect.\n');
+  }
+  if (style != null && voiceSetup == null && args.option('voice-model') != null) {
+    stderr.writeln('note: --voice-model bypasses the catalogue, so how to '
+        'deliver --voice-style is a guess. Use --voice-engine to be sure.\n');
   }
 
   final setup = PipelineSetup(
@@ -155,6 +230,8 @@ Future<void> main(List<String> argv) async {
     modelsDir: args.option('models'),
     nativeLibraryPath: args.option('native-lib'),
     cloneService: clone,
+    voiceStylePolicy:
+        voiceSetup?.stylePolicy ?? VoiceStylePolicy.instruction,
     onScriptRepair: (r) => stderr.writeln('\n· repaired script: ${r.summary}'),
     voiceProfile: profile,
   );
@@ -262,4 +339,55 @@ Future<void> main(List<String> argv) async {
 
   await pipeline.dispose();
   await stdout.flush();
+}
+
+/// Lists the voices, what they can do, and what they are licensed under.
+void _printVoices(VoiceCatalogue catalogue) {
+  stdout.writeln('Voices — stored in ${catalogue.store.root.path}\n');
+  for (final voice in catalogue.voices) {
+    final can = [
+      if (voice.canCloneVoice) 'clone',
+      if (voice.canDesignVoice) 'design',
+    ].join(', ');
+    stdout
+      ..writeln('${catalogue.has(voice) ? "installed" : "         "}  '
+          '${voice.id.padRight(16)} ${voice.sizeLabel.padLeft(9)}  $can')
+      ..writeln('            ${voice.licence.summary}')
+      ..writeln('            ${voice.languages.contains("*") ? "any language" : voice.languages.join(" ")}');
+    if (voice.notes case final notes?) {
+      stdout.writeln('            $notes');
+    }
+    stdout.writeln();
+  }
+}
+
+/// Shows the terms and waits, before a single byte is fetched.
+///
+/// These weights are somebody else's work under somebody else's terms.
+/// Accepting them is the user's to do, not this program's.
+bool _confirmLicence(VoiceModel model) {
+  stderr
+    ..writeln('\n${model.name} — ${model.sizeLabel}')
+    ..writeln('  licence: ${model.licence.name}')
+    ..writeln('  terms:   ${model.licence.url}')
+    ..writeln('  source:  ${model.source}');
+  if (model.licence.attribution case final credit?) {
+    stderr.writeln('  credit:  $credit');
+  }
+  stderr.write('\nDownload it? [y/N] ');
+
+  final answer = stdin.readLineSync()?.trim().toLowerCase();
+  return answer == 'y' || answer == 'yes';
+}
+
+var _lastPercent = -1;
+
+void _showProgress(DownloadProgress progress) {
+  final percent = (progress.fraction * 100).round();
+  if (percent == _lastPercent) return;
+  _lastPercent = percent;
+  // Carriage return rather than a new line: a gigabyte at one line per chunk
+  // buries everything else that was on screen.
+  stderr.write('\r  ${progress.file}  $percent%   ');
+  if (percent == 100) stderr.writeln();
 }

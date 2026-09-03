@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'audio.dart';
 import 'clone_service.dart';
 import 'engines.dart';
+import 'voice_catalogue.dart';
 
 /// A voice the assistant can answer in.
 ///
@@ -18,6 +19,7 @@ class VoiceProfile {
     this.referenceWavPath,
     this.transcript,
     this.language,
+    this.instruct,
   });
 
   /// The model's default speaker. Needs no recording, so it is the one voice
@@ -36,18 +38,35 @@ class VoiceProfile {
   /// conversation language.
   final String? language;
 
+  /// The voice in words — "an older man, unhurried, warm" — or, alongside a
+  /// reference recording, how to bend it: "sound tired", "read this quickly".
+  ///
+  /// Only some models can act on this; ask the catalog entry's
+  /// `canDesignVoice` before offering it, or it is silently ignored.
+  final String? instruct;
+
   bool get hasTranscript => (transcript ?? '').trim().isNotEmpty;
 
   /// False for the built-in speaker.
   bool get isCloned => referenceWavPath != null;
 
-  VoiceProfile copyWith({String? name, String? transcript, String? language}) =>
+  /// A voice that exists only as a description.
+  bool get isDesigned =>
+      referenceWavPath == null && (instruct ?? '').trim().isNotEmpty;
+
+  VoiceProfile copyWith({
+    String? name,
+    String? transcript,
+    String? language,
+    String? instruct,
+  }) =>
       VoiceProfile(
         id: id,
         name: name ?? this.name,
         referenceWavPath: referenceWavPath,
         transcript: transcript ?? this.transcript,
         language: language ?? this.language,
+        instruct: instruct ?? this.instruct,
       );
 
   Map<String, dynamic> toJson() => {
@@ -56,6 +75,7 @@ class VoiceProfile {
     if (referenceWavPath != null) 'referenceWavPath': referenceWavPath,
     if (transcript != null) 'transcript': transcript,
     if (language != null) 'language': language,
+    if (instruct != null) 'instruct': instruct,
   };
 
   static VoiceProfile fromJson(Map<String, dynamic> json) => VoiceProfile(
@@ -64,6 +84,7 @@ class VoiceProfile {
     referenceWavPath: json['referenceWavPath'] as String?,
     transcript: json['transcript'] as String?,
     language: json['language'] as String?,
+    instruct: json['instruct'] as String?,
   );
 }
 
@@ -79,6 +100,7 @@ class CloneTtsEngine implements TtsEngine {
     this._service, {
     this.profile,
     this.language,
+    this.stylePolicy = VoiceStylePolicy.instruction,
     int? sampleRate,
     this.ownsService = false,
   }) : _declaredRate = sampleRate ?? _service.sampleRate {
@@ -103,6 +125,15 @@ class CloneTtsEngine implements TtsEngine {
   /// Conversation language passed to the model, independent of the profile's.
   String? language;
 
+  /// How to say it, in words, overriding the profile's own description for
+  /// this engine. Set for a one-off — a narrator that should sound urgent —
+  /// without editing the saved voice.
+  String? instruct;
+
+  /// How the loaded model wants a description delivered. Comes from the
+  /// catalogue entry; the default suits OmniVoice, which is the default voice.
+  VoiceStylePolicy stylePolicy;
+
   @override
   int get sampleRate => _declaredRate;
 
@@ -124,9 +155,13 @@ class CloneTtsEngine implements TtsEngine {
     // A profile that is not a clone falls through to the model's own speaker,
     // which is exactly what passing no reference does.
     final voice = profile;
+    // One model takes the description as an instruction, another reads it off
+    // the front of the text. Resolved here so nothing above has to know.
+    final say = applyVoiceStyle(text, instruct ?? voice?.instruct, stylePolicy);
     final result = await _service.speak(
-      text,
+      say.text,
       language: engineLanguageFor(language),
+      instruct: say.instruct,
       refWavPath: voice?.referenceWavPath,
       refText: voice?.referenceWavPath == null ? null : voice?.transcript,
     );

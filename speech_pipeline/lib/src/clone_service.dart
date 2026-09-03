@@ -103,9 +103,15 @@ class CloneService {
   ///
   /// OmniVoice conditions on the reference transcript, so passing [refText]
   /// materially improves the clone.
+  ///
+  /// [instruct] describes the voice in words — on its own it designs one from
+  /// nothing, and alongside a reference it bends that reference. Families
+  /// that cannot do it ignore the string rather than failing, so check the
+  /// model's `canDesignVoice` before promising the user anything.
   Future<SynthesisResult> speak(
     String text, {
     String? language,
+    String? instruct,
     String? refWavPath,
     String? refText,
   }) async {
@@ -114,6 +120,7 @@ class CloneService {
       'op': 'speak',
       'text': text,
       'language': language,
+      'instruct': instruct,
       'refWavPath': refWavPath,
       'refText': refText,
     });
@@ -237,6 +244,7 @@ void _worker(List<Object?> args) {
       final audio = engine.synthesize(
         m['text']! as String,
         language: m['language'] as String?,
+        instruct: m['instruct'] as String?,
         refWavPath: m['refWavPath'] as String?,
         refText: m['refText'] as String?,
       );

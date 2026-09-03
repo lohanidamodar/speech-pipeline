@@ -15,6 +15,7 @@ import 'sherpa_stt.dart';
 import 'sherpa_tts.dart';
 import 'sherpa_vad.dart';
 import 'spoken_language_id.dart';
+import 'voice_catalogue.dart';
 
 /// Resolves model files laid out by `tool/fetch_models.sh` and builds a
 /// configured pipeline. Everything is overridable by environment variable so
@@ -28,6 +29,7 @@ class PipelineSetup {
     this.llmEngine,
     this.cloneService,
     this.voiceProfile,
+    this.voiceStylePolicy = VoiceStylePolicy.instruction,
     this.onScriptRepair,
     this.autoLanguage = false,
     this.onLanguageDetected,
@@ -56,6 +58,11 @@ class PipelineSetup {
 
   /// The voice to answer in. Null means the model's default speaker.
   final VoiceProfile? voiceProfile;
+
+  /// How the loaded voice wants a description delivered — from the catalogue
+  /// entry for [cloneService]'s model. Getting it wrong is silent: the
+  /// description is accepted and the default voice comes out.
+  final VoiceStylePolicy voiceStylePolicy;
 
   bool get usesClonedVoice => cloneService != null;
 
@@ -117,6 +124,7 @@ class PipelineSetup {
     nativeLibraryPath: nativeLibraryPath,
     cloneService: cloneService,
     voiceProfile: voiceProfile,
+    voiceStylePolicy: voiceStylePolicy,
   );
 
   /// Directory containing `libsherpa-onnx-c-api.so` / `.dylib` / `.dll`.
@@ -368,6 +376,7 @@ class PipelineSetup {
         service,
         profile: voiceProfile,
         language: language.code,
+        stylePolicy: voiceStylePolicy,
       );
     }
     if (language == PipelineLanguage.sanskrit) {

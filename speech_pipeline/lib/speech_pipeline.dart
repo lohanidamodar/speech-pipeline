@@ -32,6 +32,7 @@ export 'src/sherpa_stt.dart';
 export 'src/stt.dart';
 export 'src/thinking_filter.dart';
 export 'src/vocabulary.dart';
+export 'src/voice_catalogue.dart';
 export 'src/voice_library.dart';
 export 'src/sherpa_tts.dart';
 export 'src/sherpa_vad.dart';
