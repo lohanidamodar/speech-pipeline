@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as io;
+import 'package:speech_pipeline_server/clone_cli.dart';
 
 /// Local web UI for recording a voice and cloning it.
 ///
@@ -26,7 +27,13 @@ Future<void> main(List<String> argv) async {
     ..addOption('steps', defaultsTo: '16', help: 'OmniVoice MaskGIT steps.');
 
   final args = parser.parse(argv);
-  final engines = _Engines.from(args);
+  final engines = CloneEngines(
+    llamaTts: args.option('llama-tts'),
+    qwenDir: args.option('qwen-dir'),
+    omnivoice: args.option('omnivoice'),
+    omniDir: args.option('omni-dir'),
+    steps: args.option('steps')!,
+  );
   final webRoot = Directory(args.option('web')!);
 
   if (!webRoot.existsSync()) {
@@ -74,92 +81,7 @@ String _mime(String name) => switch (name.split('.').last) {
   _ => 'application/octet-stream',
 };
 
-class _Engines {
-  _Engines(
-    this.llamaTts,
-    this.qwenDir,
-    this.omnivoice,
-    this.omniDir,
-    this.steps,
-  );
-
-  factory _Engines.from(ArgResults a) => _Engines(
-    a.option('llama-tts'),
-    a.option('qwen-dir'),
-    a.option('omnivoice'),
-    a.option('omni-dir'),
-    a.option('steps')!,
-  );
-
-  final String? llamaTts, qwenDir, omnivoice, omniDir;
-  final String steps;
-
-  bool get hasEnglish => llamaTts != null && qwenDir != null;
-  bool get hasIndic => omnivoice != null && omniDir != null;
-
-  String describe() => [
-    '  English  (Qwen3-TTS): ${hasEnglish ? "ready" : "not configured"}',
-    '  ne / sa (OmniVoice) : ${hasIndic ? "ready" : "not configured"}',
-  ].join('\n');
-
-  /// Finds a file in [dir] matching [pattern] — the GGUF names carry their
-  /// quantisation, so hardcoding them would break on a different download.
-  String? _find(String? dir, RegExp pattern) {
-    if (dir == null) return null;
-    final d = Directory(dir);
-    if (!d.existsSync()) return null;
-    for (final f in d.listSync().whereType<File>()) {
-      if (pattern.hasMatch(f.path.split(Platform.pathSeparator).last)) {
-        return f.path;
-      }
-    }
-    return null;
-  }
-
-  List<String>? englishArgs(String ref, String text, String out) {
-    final model = _find(qwenDir, RegExp(r'^Qwen3-TTS.*\.gguf$'));
-    final mmproj = _find(qwenDir, RegExp(r'^mmproj-.*\.gguf$'));
-    if (model == null || mmproj == null) return null;
-    return [
-      '-m',
-      model,
-      '--mmproj',
-      mmproj,
-      '--tts-lang',
-      'en',
-      '--tts-speaker-file',
-      ref,
-      '-p',
-      text,
-      '-o',
-      out,
-    ];
-  }
-
-  List<String>? indicArgs(String lang, String ref, String refText, String out) {
-    final model = _find(omniDir, RegExp(r'^omnivoice-base.*\.gguf$'));
-    final codec = _find(omniDir, RegExp(r'^omnivoice-tokenizer.*\.gguf$'));
-    if (model == null || codec == null) return null;
-    return [
-      '--model',
-      model,
-      '--codec',
-      codec,
-      '--lang',
-      lang == 'ne' ? 'npi' : 'sa',
-      '--ref-wav',
-      ref,
-      '--ref-text',
-      refText,
-      '--steps',
-      steps,
-      '-o',
-      out,
-    ];
-  }
-}
-
-Future<Response> _clone(Request req, _Engines engines, Directory work) async {
+Future<Response> _clone(Request req, CloneEngines engines, Directory work) async {
   final lang = req.headers['x-lang'] ?? 'en';
   final text = Uri.decodeComponent(req.headers['x-text'] ?? '').trim();
   final refText = Uri.decodeComponent(req.headers['x-ref-text'] ?? '').trim();
@@ -209,21 +131,16 @@ Future<Response> _clone(Request req, _Engines engines, Directory work) async {
     '[clone] $lang  "${text.length > 60 ? "${text.substring(0, 60)}…" : text}"',
   );
   final started = DateTime.now();
-
-  final ProcessResult result;
-  try {
-    result = await Process.run(exe, cmdArgs);
-  } on ProcessException catch (e) {
-    return Response.internalServerError(body: 'Cannot run $exe: ${e.message}');
-  }
-
+  final why = await runClone(
+    exe: exe,
+    args: cmdArgs,
+    out: out,
+    stdinText: lang == 'en' ? null : text,
+  );
   final ms = DateTime.now().difference(started).inMilliseconds;
-  if (!out.existsSync() || out.lengthSync() < 100) {
-    final why = (result.stderr.toString() + result.stdout.toString()).trim();
+  if (why != null) {
     stdout.writeln('[clone] failed in ${ms}ms');
-    return Response.internalServerError(
-      body: why.isEmpty ? 'Engine produced no audio.' : why,
-    );
+    return Response.internalServerError(body: why);
   }
 
   stdout.writeln('[clone] ok in ${ms}ms → ${out.lengthSync() ~/ 1024} KB');
